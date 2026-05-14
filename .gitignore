@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Ojuri — evidence and audit artifacts must never be committed
+/evidence/
+/audit_logs/
+*.E01
+*.dd
+*.raw
+*.mem
+*.vmem
+/.github/workflows/

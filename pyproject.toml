@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ojuri"
+version = "0.1.0"
+description = "A forensically defensible AI agent for digital forensics and incident response, built on the SIFT Workstation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Joel Ayanyemi", email = "dextansolutions@gmail.com" },
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/Dextan-solutions/ojuri"
+
+[tool.setuptools.packages.find]
+include = ["ojuri*"]
