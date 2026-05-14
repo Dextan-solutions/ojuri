@@ -30,3 +30,4 @@ env/
 *.mem
 *.vmem
 /.github/workflows/
+/analysis/

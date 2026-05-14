@@ -1,1 +1,2 @@
-# Dependencies will be added in Week 1 Task 2 (MCP SDK + Pydantic)
+mcp==1.2.0
+pydantic>=2.5,<3.0
