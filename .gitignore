@@ -31,3 +31,4 @@ env/
 *.vmem
 /.github/workflows/
 /analysis/
+/baselines/
