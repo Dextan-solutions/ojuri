@@ -29,6 +29,24 @@ See `docs/architecture/` for the full architecture document (v1.1, 51 pages, thr
 - **Backend layer (swappable):** SIFT backend for the MVP; memory and cloud backends designed.
 - **Evidence layer (read-only):** OS-enforced read-only mount, SHA-256 baselines, append-only hash-chained audit log.
 
+## Compatible MCP clients
+
+Ojuri implements the Model Context Protocol (MCP) standard and works with any MCP-compatible client. The server is platform-independent Python; only the SIFT backend requires SIFT Workstation tooling.
+
+**Tested with:**
+- Claude Code v2.1.138 on SIFT Workstation 2024.4
+
+**Designed for compatibility with:**
+- Claude Desktop (Anthropic)
+- Cursor (IDE with MCP support)
+- Cline (VS Code extension)
+- Continue.dev (IDE extension)
+- Any other MCP client implementing the standard
+
+The `.mcp.json` file at the repository root provides a project-scoped registration that Claude Code reads automatically. Other clients have their own registration mechanisms; the server (`scripts/run_server.sh`) is the same regardless of client.
+
+**Future backends in the architecture document (memory analysis via Volatility, cloud forensics via Microsoft Graph API and AWS CloudTrail) are specified but not yet implemented in this version. The architectural pattern allows them to be added without changing the server or the MCP interface.**
+
 ## Try it out
 
 See `docs/try-it-out.md` for step-by-step setup on the SIFT Workstation.

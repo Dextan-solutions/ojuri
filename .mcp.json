@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ojuri": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["scripts/run_server.sh"],
+      "env": {}
+    }
+  }
+}
