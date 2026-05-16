@@ -1,1 +1,71 @@
-# Abstract backend interface. Concrete classes (sift, memory, cloud) implement this. Defined in Week 2.
+"""Abstract backend interface for Ojuri.
+
+Concrete backends (SIFT, memory, cloud) implement this interface. The MCP server's
+primitives are backend-agnostic; they call into whichever backend is registered at
+startup via the factory function in this module.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Import only for type hints; avoid runtime cycle with primitives module.
+    from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
+
+
+class RegistryBackend(ABC):
+    """Abstract registry-query interface. Every backend that supports registry
+    queries (SIFT, memory image analysis, cloud audit logs adapted to registry-like
+    shape) must implement these methods."""
+
+    @abstractmethod
+    async def get_registry_autostarts(
+        self, software_hive_path: Path, system_hive_path: Path | None = None
+    ) -> list["AutostartEntry"]:
+        """Return all autostart entries from the given hive(s).
+
+        Args:
+            software_hive_path: path to the SOFTWARE hive (required; contains
+                Run/RunOnceEx keys).
+            system_hive_path: optional path to the SYSTEM hive (contains service
+                auto-start config). If None, service autostarts are not included
+                in the result.
+
+        Returns:
+            list of AutostartEntry, sorted by (mechanism, name) for determinism.
+
+        Raises:
+            FileNotFoundError if a required hive path does not exist.
+            BackendError if the backend's tool invocation fails irrecoverably.
+        """
+        raise NotImplementedError
+
+
+class BackendError(Exception):
+    """Raised when a backend operation fails irrecoverably (tool missing, subprocess
+    error, output unparseable). Distinct from validation errors which are raised by
+    the primitive layer before the backend is even called."""
+
+
+# Factory function — primitives import this and call it to get the active backend.
+# Tests monkeypatch this function to inject mock backends.
+
+_active_backend: RegistryBackend | None = None
+
+
+def set_backend(backend: RegistryBackend) -> None:
+    """Register a backend as the active one. Called at MCP server startup."""
+    global _active_backend
+    _active_backend = backend
+
+
+def get_registry_backend() -> RegistryBackend:
+    """Return the currently registered registry backend. Raises if none is set."""
+    if _active_backend is None:
+        raise BackendError(
+            "No backend registered. Call set_backend() at server startup."
+        )
+    return _active_backend
