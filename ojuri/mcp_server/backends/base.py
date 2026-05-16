@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # Import only for type hints; avoid runtime cycle with primitives module.
     from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
+    from ojuri.mcp_server.primitives.prefetch_entries import PrefetchEntry
 
 
 class RegistryBackend(ABC):
@@ -69,3 +70,43 @@ def get_registry_backend() -> RegistryBackend:
             "No backend registered. Call set_backend() at server startup."
         )
     return _active_backend
+
+
+# ---- Prefetch backend -----------------------------------------------------
+
+
+class PrefetchBackend(ABC):
+    """Abstract prefetch-query interface. Implementations parse Windows Prefetch
+    (.pf) files and return typed PrefetchEntry records."""
+
+    @abstractmethod
+    async def get_prefetch_entries(self, prefetch_path: Path) -> list["PrefetchEntry"]:
+        """Parse Prefetch files at prefetch_path.
+
+        Args:
+            prefetch_path: either a single .pf file OR a directory of .pf files.
+
+        Returns:
+            list of PrefetchEntry sorted by (executable_name, last_run_time desc).
+
+        Raises:
+            FileNotFoundError if prefetch_path does not exist.
+            BackendError if parsing fails irrecoverably.
+        """
+        raise NotImplementedError
+
+
+_active_prefetch_backend: PrefetchBackend | None = None
+
+
+def set_prefetch_backend(backend: PrefetchBackend) -> None:
+    global _active_prefetch_backend
+    _active_prefetch_backend = backend
+
+
+def get_prefetch_backend() -> PrefetchBackend:
+    if _active_prefetch_backend is None:
+        raise BackendError(
+            "No prefetch backend registered. Call set_prefetch_backend() at server startup."
+        )
+    return _active_prefetch_backend

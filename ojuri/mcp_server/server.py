@@ -14,8 +14,9 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-from ojuri.mcp_server.backends.base import set_backend
+from ojuri.mcp_server.backends.base import set_backend, set_prefetch_backend
 from ojuri.mcp_server.backends.sift.registry import SiftRegistryBackend
+from ojuri.mcp_server.backends.sift.prefetch import SiftPrefetchBackend
 from ojuri.mcp_server.primitives.hello_world import (
     HelloWorldInput,
     hello_world,
@@ -23,6 +24,10 @@ from ojuri.mcp_server.primitives.hello_world import (
 from ojuri.mcp_server.primitives.registry_autostarts import (
     GetRegistryAutostartsInput,
     get_registry_autostarts,
+)
+from ojuri.mcp_server.primitives.prefetch_entries import (
+    GetPrefetchEntriesInput,
+    get_prefetch_entries,
 )
 
 logger = logging.getLogger("ojuri.mcp_server")
@@ -57,6 +62,17 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema=GetRegistryAutostartsInput.model_json_schema(),
         ),
+        types.Tool(
+            name="get_prefetch_entries",
+            description=(
+                "Returns Windows Prefetch entries showing what programs ran on the system, "
+                "when, how often, and what files they touched. Input is either a path to a "
+                "single .pf file or a directory containing .pf files (typically C:\\\\Windows\\\\Prefetch). "
+                "Each entry includes the executable name, run count, up to 8 execution timestamps, "
+                "the volume the executable ran from, and the list of files the prefetcher recorded."
+            ),
+            inputSchema=GetPrefetchEntriesInput.model_json_schema(),
+        ),
     ]
 
 
@@ -75,6 +91,11 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         result = await get_registry_autostarts(payload)
         return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
 
+    if name == "get_prefetch_entries":
+        payload = GetPrefetchEntriesInput(**arguments)
+        result = await get_prefetch_entries(payload)
+        return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -84,6 +105,8 @@ async def main() -> None:
     # Initialize the SIFT backend and register it as the active one.
     set_backend(SiftRegistryBackend())
     logger.info("SIFT backend registered.")
+    set_prefetch_backend(SiftPrefetchBackend())
+    logger.info("SIFT prefetch backend registered.")
     async with stdio_server() as (read_stream, write_stream):
         await app.run(
             read_stream,
