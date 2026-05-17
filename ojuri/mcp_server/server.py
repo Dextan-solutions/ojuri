@@ -19,10 +19,12 @@ from ojuri.mcp_server.backends.base import (
     set_backend,
     set_prefetch_backend,
     set_mft_backend,
+    set_evidence_backend,
 )
 from ojuri.mcp_server.backends.sift.registry import SiftRegistryBackend
 from ojuri.mcp_server.backends.sift.prefetch import SiftPrefetchBackend
 from ojuri.mcp_server.backends.sift.mft import SiftMftBackend
+from ojuri.mcp_server.backends.sift.evidence import SiftEvidenceDiscoveryBackend
 from ojuri.mcp_server.primitives.hello_world import (
     HelloWorldInput,
     hello_world,
@@ -38,6 +40,10 @@ from ojuri.mcp_server.primitives.prefetch_entries import (
 from ojuri.mcp_server.primitives.mft_timeline import (
     GetMftTimelineInput,
     get_mft_timeline,
+)
+from ojuri.mcp_server.primitives.list_evidence_artefacts import (
+    GetEvidenceArtefactsInput,
+    list_evidence_artefacts,
 )
 
 logger = logging.getLogger("ojuri.mcp_server")
@@ -95,6 +101,19 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema=GetMftTimelineInput.model_json_schema(),
         ),
+        types.Tool(
+            name="list_evidence_artefacts",
+            description=(
+                "Walks an evidence mount root and returns the canonical forensic "
+                "artifact locations: user profiles with their NTUSER.DAT and "
+                "UsrClass.dat hives, system hives (SOFTWARE, SYSTEM, etc.) under "
+                "Windows/System32/config/, Prefetch directory, and the $MFT file. "
+                "This is the discovery primitive — the agent MUST call this first "
+                "on any new case before invoking other registry/MFT/prefetch primitives, "
+                "which require paths from this output. Read-only; no subprocess."
+            ),
+            inputSchema=GetEvidenceArtefactsInput.model_json_schema(),
+        ),
     ]
 
 
@@ -143,6 +162,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         )
         return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
 
+    if name == "list_evidence_artefacts":
+        payload = GetEvidenceArtefactsInput(**arguments)
+        result = await list_evidence_artefacts(payload)
+        get_audit_logger().record(
+            tool_name="list_evidence_artefacts",
+            input_payload=payload.model_dump(),
+            output_payload=result.model_dump(),
+        )
+        return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -156,6 +185,8 @@ async def main() -> None:
     logger.info("SIFT prefetch backend registered.")
     set_mft_backend(SiftMftBackend())
     logger.info("SIFT MFT backend registered.")
+    set_evidence_backend(SiftEvidenceDiscoveryBackend())
+    logger.info("SIFT evidence discovery backend registered.")
     init_audit_logger()
     logger.info("Audit logger initialised.")
     async with stdio_server() as (read_stream, write_stream):

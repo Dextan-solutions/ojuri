@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
     from ojuri.mcp_server.primitives.prefetch_entries import PrefetchEntry
     from ojuri.mcp_server.primitives.mft_timeline import MftEntry
+    from ojuri.mcp_server.primitives.list_evidence_artefacts import (
+        DiscoveredEvidence,
+    )
 
 
 class RegistryBackend(ABC):
@@ -157,3 +160,48 @@ def get_mft_backend() -> MftBackend:
     if _active_mft_backend is None:
         raise BackendError("No MFT backend registered. Call set_mft_backend() at server startup.")
     return _active_mft_backend
+
+
+# ---- Evidence-discovery backend ------------------------------------------
+
+
+class EvidenceDiscoveryBackend(ABC):
+    """Abstract evidence-discovery interface. Implementations perform a
+    read-only filesystem walk of a mounted evidence root and return the
+    canonical forensic artefact locations. No subprocess."""
+
+    @abstractmethod
+    async def list_evidence_artefacts(
+        self, evidence_root: Path
+    ) -> "DiscoveredEvidence":
+        """Walk evidence_root and return categorized artefact paths.
+
+        Args:
+            evidence_root: absolute path to a mounted evidence volume root.
+
+        Returns:
+            DiscoveredEvidence with user profiles, system hives, prefetch
+            directories, MFT files, and summary counts.
+
+        Raises:
+            FileNotFoundError if evidence_root does not exist.
+            NotADirectoryError if evidence_root is not a directory.
+        """
+        raise NotImplementedError
+
+
+_active_evidence_backend: EvidenceDiscoveryBackend | None = None
+
+
+def set_evidence_backend(backend: EvidenceDiscoveryBackend) -> None:
+    global _active_evidence_backend
+    _active_evidence_backend = backend
+
+
+def get_evidence_backend() -> EvidenceDiscoveryBackend:
+    if _active_evidence_backend is None:
+        raise BackendError(
+            "No evidence-discovery backend registered. "
+            "Call set_evidence_backend() at server startup."
+        )
+    return _active_evidence_backend

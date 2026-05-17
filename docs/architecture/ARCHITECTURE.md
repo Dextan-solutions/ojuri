@@ -182,14 +182,17 @@ do anything the code below the boundary did not verify and record.
 
 ## 5. Capability Layer: Forensic Primitives
 
-### 5.1 Catalogue (28 designed, 3 implemented in MVP)
+### 5.1 Catalogue (28 analytical designed + 1 discovery, 4 implemented in MVP)
 
 A *primitive* answers one forensic question with a typed result. The full
-design catalogue is 28; the Week-2 MVP implements 3 end-to-end. Status legend:
+design catalogue is 28 analytical primitives plus 1 discovery primitive
+(`list_evidence_artefacts`, the mandatory first call that locates artefacts
+for the rest); 4 are implemented end-to-end. Status legend:
 **✓ implemented** · **○ designed, not yet built**.
 
 | # | Primitive | Question it answers | Status |
 |---|-----------|---------------------|--------|
+| D | `list_evidence_artefacts` | Where are the canonical forensic artefacts on this mount? | ✓ |
 | 1 | `get_registry_autostarts` | What is configured to autostart? | ✓ |
 | 2 | `get_prefetch_entries` | What programs ran, when, how often? | ✓ |
 | 3 | `get_mft_timeline` | What is the NTFS filesystem timeline? | ✓ |
@@ -219,9 +222,10 @@ design catalogue is 28; the Week-2 MVP implements 3 end-to-end. Status legend:
 | 27 | `get_memory_pslist` | What processes in a memory image? | ○ |
 | 28 | `get_memory_netscan` | What network artefacts in a memory image? | ○ |
 
-The naming, typed-I/O, validation, and audit pattern is identical for all 28;
-the three implemented ones prove the pattern across three backend strategies
-(§5.3). The remaining 25 are roadmap (§12), not architectural unknowns.
+The naming, typed-I/O, validation, and audit pattern is identical for all of
+them; the four implemented ones prove the pattern across four backend
+strategies (§5.3). The remaining 25 analytical primitives are roadmap (§12),
+not architectural unknowns.
 
 ### 5.2 Implemented primitives (full spec)
 
@@ -296,22 +300,61 @@ the three implemented ones prove the pattern across three backend strategies
 - **Test fixture:** `tests/fixtures/mft/dfr16_mft.bin` — the NIST
   "Data Leakage Case" **DFR-16** reference `$MFT` (US-Government public domain).
 
-### 5.3 Design pattern — three backend strategies
+#### 5.2.4 `list_evidence_artefacts`
+
+- **Source:** `ojuri/mcp_server/primitives/list_evidence_artefacts.py`
+- **Role:** the **discovery** primitive. It is the **mandatory first call** on
+  every case (enforced by the Investigator system prompt, §8): the other three
+  primitives need explicit artefact paths, and those paths come from here. The
+  orchestrator no longer passes per-artefact CLI flags — it passes one
+  `--evidence-root` and the agent discovers the rest.
+- **Input (`GetEvidenceArtefactsInput`):**
+  - `evidence_root: str` — absolute path to a mounted evidence volume root.
+    Validated by a `field_validator` that rejects shell metacharacters
+    (`; | & \` $ ( ) \n \r`), `..` traversal, non-absolute paths, and any
+    path **not** under the whitelist `/evidence/` or `/var/lib/ojuri/raw/`.
+- **Output (`DiscoveredEvidence`):**
+  - `primitive_name: "list_evidence_artefacts"` (literal, anti-spoof)
+  - `evidence_root: str`
+  - `user_profiles: list[UserProfile]` — each
+    `{username, profile_path, ntuser_dat|None, usrclass_dat|None}`; pseudo-
+    profiles (`Default`, `Default User`, `Public`, `All Users`) are skipped.
+  - `system_hives: list[SystemHive]` — each `{name, path, size_bytes}` with
+    `name ∈ {SOFTWARE, SYSTEM, SECURITY, SAM, DEFAULT}`; only hives that
+    actually exist on disk are listed.
+  - `prefetch_directories: list[str]` — the `Windows/Prefetch` directory iff
+    it exists and contains `.pf` files.
+  - `mft_files: list[str]` — the top-level `$MFT` iff present.
+  - `summary: dict[str, int]` — counts (`users`, `system_hives`,
+    `prefetch_directories`, `mft_files`).
+- **Backend:** SIFT — a **pure-Python, read-only `os`/`pathlib` filesystem
+  walk. No subprocess, no external tool.** Tolerant of partial results: a
+  per-artefact `OSError` (EINVAL/EACCES on WOF reparse points and protected
+  directories — see §7.3) skips that artefact and is logged; the discovery
+  never aborts, and a user with an unreadable `NTUSER.DAT` still appears with
+  `ntuser_dat=None`. Never writes anywhere (respects the read-only mount).
+  *(Strategy D: pure-Python filesystem walk.)*
+- **Verification:** integration test against `rocba_test` confirms ground
+  truth — profiles `fredr` + `srl-h` with non-None `NTUSER.DAT`, `SOFTWARE` +
+  `SYSTEM` hives, exactly one `…/Windows/Prefetch`, and a `…/$MFT`.
+
+### 5.3 Design pattern — four backend strategies
 
 The architectural insight the MVP proves: **the capability layer is
 tool-agnostic.** A primitive defines a typed question and a typed answer; *how*
 the answer is produced is a backend concern hidden behind the trust boundary.
-The three implemented primitives deliberately use three different strategies:
+The four implemented primitives deliberately use four different strategies:
 
 | Strategy | Primitive | Mechanism | Why chosen |
 |----------|-----------|-----------|------------|
 | A. Subprocess + regex | `get_registry_autostarts` | `rip.pl` multi-plugin, parse stdout | RegRipper is the de-facto registry tool; no clean library |
 | B. Direct library call | `get_prefetch_entries` | `pyscca` in-process | Official binding, no .NET, no subprocess, license-clean |
 | C. Subprocess + CSV | `get_mft_timeline` | `MFTECmd --csv`, BOM-aware parse | Mature, clean CSV; analyzeMFT was empirically broken |
+| D. Pure-Python filesystem walk | `list_evidence_artefacts` | `os`/`pathlib` read-only walk, no subprocess | Discovery needs no external tool; stdlib-only ⇒ runs on every platform |
 
-Same trust boundary, same Pydantic-typed output contract, three
+Same trust boundary, same Pydantic-typed output contract, four
 implementations. This is why the remaining 25 primitives are roadmap and not
-risk: each new one slots into whichever of these three patterns fits its tool,
+risk: each new one slots into whichever of these four patterns fits its tool,
 behind an unchanged boundary, and inherits audit + validation for free.
 
 ---
@@ -472,9 +515,10 @@ silently mis-mounted.
    post-hoc tamper-detection layer: hash every file once, re-hash later, and
    any ADDED/REMOVED/MODIFIED path is reported. Defends even against an
    out-of-band change the mount flags didn't stop. The walk **tolerates
-   per-file and per-directory I/O errors** (e.g. `OSError [Errno 22]` on
-   NTFS/WOF-compressed files under the `ntfs3` mount, or `[Errno 5]` on
-   sectors outside the imaged region): the offending path is recorded in a
+   per-file and per-directory I/O errors** (e.g. `OSError [Errno 22]` on WOF
+   reparse points (NTFS reparse tag `0x80000017` — Windows Overlay Filter; no
+   Linux NTFS driver implements decompression), or `[Errno 5]` on sectors
+   outside the imaged region): the offending path is recorded in a
    `skipped` list — `{path, error_class, errno, message}` — and the walk
    continues; the process exits non-zero only on catastrophic failure (zero
    files hashed). This is deliberate: baselining is tamper *detection*, not an
@@ -509,6 +553,12 @@ duplicated here.** Summary of the selected design:
 - **Bounded self-correction:** `DEFAULT_MAX_ITERATIONS = 3`, resolved from
   CLI > env > default, then **hard-capped at 10** and floored at 1 by the
   orchestrator, with a pure, unit-tested `decide_termination`.
+- **Mandatory discovery:** the Investigator's first MCP call on every case
+  **must** be `list_evidence_artefacts(evidence_root)` (§5.2.4). All
+  downstream registry/prefetch/MFT calls reference paths from that discovery
+  output; the orchestrator passes only `--evidence-root`, never per-artefact
+  paths. Calling an analytical primitive before discovery is defined as an
+  error in the Investigator system prompt.
 - **Option A (confidence downgrade allowed):** a disputed finding may be
   revised, supported with more evidence, **or** downgraded to `low` confidence
   with explanation — never silently deleted. A downgraded finding is *still
@@ -597,6 +647,16 @@ Detailed roadmap may move to `ROADMAP.md` if it grows; summary here:
   reusable case knowledge.
 - **Evidence formats:** AFF4 (v0.4), VMDK/VHDX (v0.5), native Windows E01
   opening via Arsenal/OSFMount (v0.3).
+- **Native Windows port for WOF-backed file content baselining.** WOF
+  (Windows Overlay Filter) reparse points (NTFS reparse tag `0x80000017`) are
+  decoded only by the Windows kernel's WOF driver. No Linux NTFS driver
+  (`ntfs3` *or* `ntfs-3g`) implements WOF decompression. Affected files appear
+  as 34-byte broken symlinks ("unsupported reparse tag 0x80000017"). A native
+  Windows port of Ojuri would baseline these files using the host kernel's WOF
+  driver. Linux dual-FUSE (`ntfs3` + `ntfs-3g`) was empirically tested and does
+  **not** solve this — both drivers hit the same wall (see DECISIONS
+  2026-05-17 "WOF reparse-point clarification"). The discovery primitive
+  (`list_evidence_artefacts`, §5.2.4) is built and no longer roadmap.
 
 ---
 

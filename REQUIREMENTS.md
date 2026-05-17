@@ -119,6 +119,26 @@ pip install -r requirements.txt
 
 ---
 
+## Per-primitive platform support
+
+| Primitive | Linux | macOS | Windows | External dependency |
+|-----------|:-----:|:-----:|:-------:|---------------------|
+| `list_evidence_artefacts` | ✓ | ✓ | ✓ | **None — Python stdlib only** |
+| `get_registry_autostarts` | ✓ | ✓ | ✓ | RegRipper3 (`rip.pl`) |
+| `get_prefetch_entries` | ✓ | ✓ | ✓ | `pyscca` (libscca binding) |
+| `get_mft_timeline` | ✓ | ✓ | ✓ | MFTECmd |
+
+`list_evidence_artefacts` (the mandatory discovery primitive) uses **only the
+Python standard library** (`os`, `pathlib`) — a pure, read-only filesystem
+walk with **no subprocess and no external dependency**. It therefore runs
+unmodified on **all platforms (Linux, macOS, Windows)** with nothing to
+install. The only platform-specific gap remaining anywhere in Ojuri is WOF
+content-baselining of reparse-point files on Linux (§ Troubleshooting / see
+DECISIONS 2026-05-17 "WOF reparse-point clarification"); a future **native
+Windows port** would close that gap by using the host kernel's WOF driver.
+
+---
+
 ## Python dependencies
 
 Pinned in [`requirements.txt`](./requirements.txt):

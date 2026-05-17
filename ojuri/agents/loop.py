@@ -19,8 +19,12 @@ Usage:
         --question "What persistence is configured?" \\
         --evidence-id case_001 \\
         --output analysis/case_001/ \\
-        [--max-iterations 3] \\
-        [--ntuser-hive PATH] [--prefetch-dir PATH] [--mft-file PATH]
+        --evidence-root /evidence/case_001 \\
+        [--max-iterations 3]
+
+The orchestrator no longer accepts per-artefact paths. The Investigator
+discovers them itself by calling list_evidence_artefacts(evidence_root) as
+its mandatory first MCP call.
 
 Exit codes:
     0  success           all verdicts VERIFIED in the final iteration
@@ -104,9 +108,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Max iterations (default {DEFAULT_MAX_ITERATIONS}, hard cap "
         f"{MAX_ITERATIONS_HARD_CAP}).",
     )
-    parser.add_argument("--ntuser-hive", default=None, help="Path to a registry hive.")
-    parser.add_argument("--prefetch-dir", default=None, help="Path to Prefetch dir.")
-    parser.add_argument("--mft-file", default=None, help="Path to a parsed $MFT.")
+    parser.add_argument(
+        "--evidence-root",
+        required=True,
+        help=(
+            "Absolute path to the mounted evidence root (under /evidence/ or "
+            "/var/lib/ojuri/raw/). The Investigator discovers artefact paths "
+            "from this via list_evidence_artefacts."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Resolve max iterations: CLI > env > default, then hard-cap.
@@ -128,6 +138,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     except OSError as e:
         parser.error(f"--output directory not creatable: {e}")
     args.output = str(out)
+
+    # Validate --evidence-root: same whitelist as the discovery primitive,
+    # plus it must exist as a directory.
+    from ojuri.mcp_server.primitives.list_evidence_artefacts import (
+        ALLOWED_EVIDENCE_PREFIXES,
+        _path_is_whitelisted,
+    )
+
+    ev = args.evidence_root
+    if not ev.startswith("/"):
+        parser.error(f"--evidence-root must be an absolute path: {ev!r}")
+    if ".." in ev or any(c in ev for c in (";", "|", "&", "`", "$", "(", ")", "\n", "\r")):
+        parser.error(f"--evidence-root contains unsafe characters: {ev!r}")
+    if not _path_is_whitelisted(ev):
+        parser.error(
+            f"--evidence-root must be under "
+            f"{' or '.join(ALLOWED_EVIDENCE_PREFIXES)}: {ev!r}"
+        )
+    if not Path(ev).is_dir():
+        parser.error(f"--evidence-root is not an existing directory: {ev!r}")
 
     return args
 
@@ -458,13 +488,10 @@ async def main() -> int:
     output_dir = Path(args.output)
     audit_log_path = output_dir / "audit.log"
 
-    evidence_paths: dict[str, Any] = {"evidence_id": args.evidence_id}
-    if args.ntuser_hive:
-        evidence_paths["ntuser_hive"] = args.ntuser_hive
-    if args.prefetch_dir:
-        evidence_paths["prefetch_dir"] = args.prefetch_dir
-    if args.mft_file:
-        evidence_paths["mft_file"] = args.mft_file
+    evidence_paths: dict[str, Any] = {
+        "evidence_id": args.evidence_id,
+        "evidence_root": args.evidence_root,
+    }
 
     print(
         f"[loop] evidence={args.evidence_id} max_iterations={args.max_iterations} "

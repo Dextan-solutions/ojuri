@@ -181,3 +181,79 @@ bytes hashed**, 649.9 s, exit 0).
 ---
 
 <!-- Append new decisions below this line. Do not edit entries above. -->
+
+## 2026-05-17 — WOF reparse-point clarification (correction to prior entry)
+
+Context: After committing the per-file I/O error tolerance fix, deeper
+investigation revealed the actual nature of the 18,611 skipped files.
+The previous entry described them as "transparently NTFS/WOF-compressed
+system files." This framing implies the files are *content-compressed*
+on the volume — implying a decompressor would solve the problem.
+Empirical evidence:
+- On ntfs-3g mount of the same volume, these files appear as 34-byte
+  symbolic links reporting "unsupported reparse tag 0x80000017".
+- stat output: "unsupported reparse tag 0x80000017" — this is
+  IO_REPARSE_TAG_WOF, the Windows Overlay Filter reparse tag.
+- WOF reparse points are NOT compressed file content stored in NTFS.
+  They are *pointers* to a separate WIM (Windows Imaging Format) backing
+  store. Actual file content lives in that backing store, indexed by
+  the reparse point's metadata.
+- Reading these files requires (a) Windows' kernel WOF driver, or
+  (b) a Linux WOF decompressor library that locates the WIM backing
+  store and decompresses the indexed bytes using Microsoft's XPRESS
+  compression variants. No mature Linux implementation exists for (b).
+- Dual-FUSE strategy (ntfs3 primary + ntfs-3g secondary mount) was
+  empirically tested and DOES NOT help — both drivers fail at the
+  same WOF reparse-tag layer.
+Decision: Document the correct root cause. The baseline limitation is
+a fundamental Linux NTFS-driver constraint, not an Ojuri defect.
+Roadmap path forward is a native Windows port of Ojuri, not a Linux
+workaround.
+Alternatives explored and rejected:
+- ntfs-3g -o force,ro as primary mount: rejected — force flag bypasses
+  volume validation that exists for tamper detection; chain-of-custody
+  question outweighs the marginal benefit.
+- Dual-FUSE mount (ntfs3 + ntfs-3g): empirically tested; ntfs-3g hits
+  same wall on WOF reparse points. No benefit.
+- Native Linux WOF decompressor library: out of scope; no mature
+  production-grade implementation exists; building one is 200-500
+  hours of engineering effort.
+- Native filesystem access via Python NTFS library instead of mounted
+  volume: substantial new architecture replacing the kernel-mount
+  read-only enforcement; out of scope.
+Rationale: The skipped files are system DLLs, MSIX bundle contents,
+and Windows catalog files. Empirical analysis of the rocba_test
+baseline confirmed: of 18,618 skipped paths, 0 are in user document
+directories. The IP-theft demo case's analytical evidence (NTUSER.DAT,
+SYSTEM hive, MFT, Prefetch, OneDrive/Dropbox/iCloud content
+directories) all hashed successfully.
+Related: ARCHITECTURE.md §7.3 (corrected); §12 roadmap (native
+Windows port added); scripts/baseline_evidence.py (no code change —
+the per-file tolerance is exactly right regardless of cause).
+
+---
+
+## 2026-05-17 — Evidence discovery primitive (mandatory first call)
+
+Context: The first three primitives (registry/prefetch/MFT) require explicit
+paths to artifacts. The orchestrator was passing these via CLI flags
+(--ntuser-hive, --prefetch-dir, --mft-file). This couples the orchestrator
+to case-specific knowledge and prevents the agent from autonomously discovering
+evidence on new cases. Per ARCHITECTURE.md §8 (Reasoning Layer) and the
+Find Evil! "autonomous execution quality" criterion, the agent should
+discover its own evidence paths.
+Decision: Implement list_evidence_artefacts as the 4th MCP primitive.
+Output schema includes user profiles, system hives, prefetch directories,
+and MFT files. Mandatory: the Investigator system prompt requires this
+primitive be called first on every case. The orchestrator's CLI now
+requires --evidence-root (replacing --ntuser-hive/--prefetch-dir/--mft-file).
+Alternatives: Optional discovery (rejected — leaves the door open for the
+Investigator to skip discovery and miss artifacts); scripted helper that
+prints paths (rejected — outside the audit chain; not chain-of-custody
+compliant); discovery as part of evidence layer (rejected — would couple
+evidence opening to NTFS knowledge; better as a separate primitive).
+Rationale: Pure-Python walk, no subprocess, tolerant of partial failures.
+This is the fourth backend pattern (in addition to subprocess+regex,
+direct library, subprocess+CSV).
+Related: ARCHITECTURE.md §5.2, §8; ojuri/mcp_server/primitives/list_evidence_artefacts.py;
+ojuri/agents/loop.py main(); verified end-to-end on rocba_test.

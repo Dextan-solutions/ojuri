@@ -145,8 +145,21 @@ def make_fake_exec(script: list[tuple[str, str]]):
 
 def _run(monkeypatch, tmp_path: Path, argv: list[str], script) -> int:
     monkeypatch.setattr("asyncio.create_subprocess_exec", make_fake_exec(script))
+    # parse_args validates --evidence-root against the discovery whitelist
+    # (/evidence/, /var/lib/ojuri/raw/). These mock-subprocess tests must not
+    # depend on a real evidence mount, so accept the tmp evidence dir.
+    monkeypatch.setattr(
+        "ojuri.mcp_server.primitives.list_evidence_artefacts._path_is_whitelisted",
+        lambda v: True,
+    )
     monkeypatch.setattr(sys, "argv", argv)
     return asyncio.run(loop.main())
+
+
+def _make_evidence_root(tmp_path: Path) -> str:
+    ev = tmp_path / "evidence_root"
+    ev.mkdir(parents=True, exist_ok=True)
+    return str(ev)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +175,8 @@ def test_loop_single_iteration_success(monkeypatch, tmp_path) -> None:
         "case_001",
         "--output",
         str(out),
+        "--evidence-root",
+        _make_evidence_root(tmp_path),
         "--max-iterations",
         "3",
     ]
@@ -188,6 +203,8 @@ def test_loop_self_correction_two_iterations(monkeypatch, tmp_path) -> None:
         "case_002",
         "--output",
         str(out),
+        "--evidence-root",
+        _make_evidence_root(tmp_path),
         "--max-iterations",
         "3",
     ]
@@ -218,6 +235,8 @@ def test_loop_max_iterations_inconclusive(monkeypatch, tmp_path) -> None:
         "case_003",
         "--output",
         str(out),
+        "--evidence-root",
+        _make_evidence_root(tmp_path),
         "--max-iterations",
         "3",
     ]
