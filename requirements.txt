@@ -1,2 +1,5 @@
 mcp==1.2.0
 pydantic>=2.5,<3.0
+
+# test-only
+pytest>=8.0
