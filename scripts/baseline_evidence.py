@@ -4,6 +4,14 @@
 Walks the evidence mount, computes SHA-256 for every regular file, and writes
 a structured JSON baseline that future integrity checks compare against.
 
+Per-file and per-directory I/O errors (e.g. OSError [Errno 5] on NTFS-internal
+paths such as ``$GetCurrent/media`` exposed via a read-only ``ntfs3`` mount) are
+tolerated: the offending path is recorded in a ``skipped`` list and the walk
+continues. The process exits non-zero only on catastrophic failure (nothing
+could be hashed at all). See ARCHITECTURE.md §7.3 and the 2026-05-17 DECISIONS
+entry — baselining is a post-hoc tamper-detection layer, not an integrity gate,
+so every path in the source tree must be accounted for (hashed *or* skipped).
+
 Usage:
     python3 baseline_evidence.py <case_id> [--evidence-root /evidence] [--baseline-dir ~/ojuri/baselines]
     python3 baseline_evidence.py <case_id> --verify     # re-check, compare to existing baseline
@@ -19,6 +27,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,7 +37,11 @@ CHUNK_SIZE = 1024 * 1024  # 1 MiB per hash update
 
 
 def sha256_of_file(path: Path) -> str:
-    """Compute SHA-256 of a file in streaming chunks (handles large files)."""
+    """Compute SHA-256 of a file in streaming chunks (handles large files).
+
+    May raise OSError if the file (or a region of it) is unreadable — the
+    caller is responsible for catching it and recording the path as skipped.
+    """
     h = hashlib.sha256()
     with path.open("rb") as f:
         while True:
@@ -39,23 +52,77 @@ def sha256_of_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def walk_and_hash(root: Path) -> list[dict[str, Any]]:
-    """Walk root recursively. For each regular file, capture its relative path,
-    size, and SHA-256 hash. Symlinks and special files are skipped (with a
-    comment in the output)."""
+def _skip_entry(rel_path: str, exc: OSError) -> dict[str, Any]:
+    """Build one structured ``skipped`` record from an OSError."""
+    err_no = getattr(exc, "errno", None)
+    prefix = os.strerror(err_no) if err_no is not None else exc.__class__.__name__
+    target = getattr(exc, "filename", None)
+    message = f"{prefix}: {target}" if target else f"{prefix}: {exc}"
+    return {
+        "path": rel_path,
+        "error_class": exc.__class__.__name__,
+        "errno": err_no,
+        "message": message,
+    }
+
+
+def walk_and_hash(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Walk ``root`` recursively, tolerating per-file and per-directory I/O errors.
+
+    For each regular file: capture its mount-relative POSIX path, size, and
+    SHA-256. Symlinks and special (non-regular) files are silently excluded —
+    they would double-count or break verification. Any OSError raised while
+    enumerating a directory or while ``lstat``/``open``/``read``-ing a file is
+    caught: the path is appended to ``skipped`` and the walk continues.
+
+    Returns: ``(files, skipped)``. ``files`` is sorted by relative path for
+    deterministic, byte-stable output; ``skipped`` is in encounter order.
+    """
     results: list[dict[str, Any]] = []
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            # Symlinks are skipped — they point elsewhere and would double-count
-            # or break if the target moves. Documented intentional exclusion.
-            continue
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root).as_posix()
-        size = path.stat().st_size
-        digest = sha256_of_file(path)
-        results.append({"path": rel, "size_bytes": size, "sha256": digest})
-    return results
+    skipped: list[dict[str, Any]] = []
+
+    def _rel(p: str) -> str:
+        try:
+            return Path(p).relative_to(root).as_posix()
+        except ValueError:
+            return p
+
+    def _on_walk_error(exc: OSError) -> None:
+        # os.walk swallows directory-enumeration errors unless we supply this
+        # callback. Record the directory and let the walk continue elsewhere.
+        bad = getattr(exc, "filename", None) or str(root)
+        skipped.append(_skip_entry(_rel(bad), exc))
+
+    for dirpath, dirnames, filenames in os.walk(
+        root, topdown=True, onerror=_on_walk_error, followlinks=False
+    ):
+        # Deterministic recursion + file order.
+        dirnames.sort()
+        for name in sorted(filenames):
+            full = os.path.join(dirpath, name)
+            try:
+                if os.path.islink(full):
+                    # Symlinks are excluded — they point elsewhere and would
+                    # double-count or break if the target moves.
+                    continue
+                st = os.lstat(full)
+                if not os.path.isfile(full):
+                    # Special files (devices, FIFOs, sockets) are not hashed.
+                    continue
+                digest = sha256_of_file(Path(full))
+            except OSError as exc:
+                skipped.append(_skip_entry(_rel(full), exc))
+                continue
+            results.append(
+                {
+                    "path": _rel(full),
+                    "size_bytes": st.st_size,
+                    "sha256": digest,
+                }
+            )
+
+    results.sort(key=lambda e: e["path"])
+    return results, skipped
 
 
 def build_baseline(case_id: str, evidence_root: Path) -> dict[str, Any]:
@@ -63,16 +130,32 @@ def build_baseline(case_id: str, evidence_root: Path) -> dict[str, Any]:
     if not evidence_root.is_dir():
         raise SystemExit(f"Error: evidence root does not exist: {evidence_root}")
 
-    files = walk_and_hash(evidence_root)
+    started = time.monotonic()
+    files, skipped = walk_and_hash(evidence_root)
+    duration = round(time.monotonic() - started, 3)
+
     total_bytes = sum(f["size_bytes"] for f in files)
     return {
         "case_id": case_id,
+        # New schema (per 2026-05-17 DECISIONS entry).
+        "mount_point": str(evidence_root),
+        "baseline_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        # Legacy fields retained for backward compatibility with --verify and
+        # the evidence-layer integration test. Do not remove without updating
+        # tests/integration/test_evidence_layer.py.
         "baseline_created_utc": datetime.now(timezone.utc).isoformat(),
         "evidence_root": str(evidence_root),
         "algorithm": "sha256",
         "total_files": len(files),
         "total_bytes": total_bytes,
         "files": files,
+        "skipped": skipped,
+        "summary": {
+            "files_hashed": len(files),
+            "files_skipped": len(skipped),
+            "total_bytes_hashed": total_bytes,
+            "duration_seconds": duration,
+        },
     }
 
 
@@ -88,8 +171,9 @@ def verify_baseline(baseline_path: Path, evidence_root: Path) -> int:
     with baseline_path.open() as f:
         baseline = json.load(f)
 
+    current_files, _current_skipped = walk_and_hash(evidence_root)
     stored = {entry["path"]: entry for entry in baseline["files"]}
-    current = {entry["path"]: entry for entry in walk_and_hash(evidence_root)}
+    current = {entry["path"]: entry for entry in current_files}
 
     added = set(current.keys()) - set(stored.keys())
     removed = set(stored.keys()) - set(current.keys())
@@ -142,11 +226,30 @@ def main() -> int:
     baseline = build_baseline(args.case_id, evidence_root)
     baseline_path.write_text(json.dumps(baseline, indent=2, sort_keys=True))
 
+    summary = baseline["summary"]
     print(f"✓ Baseline created: {baseline_path}")
-    print(f"  case_id:      {baseline['case_id']}")
-    print(f"  total_files:  {baseline['total_files']}")
-    print(f"  total_bytes:  {baseline['total_bytes']}")
-    print(f"  created_utc:  {baseline['baseline_created_utc']}")
+    print(f"  case_id:           {baseline['case_id']}")
+    print(f"  mount_point:       {baseline['mount_point']}")
+    print(f"  files_hashed:      {summary['files_hashed']}")
+    print(f"  files_skipped:     {summary['files_skipped']}")
+    print(f"  total_bytes_hashed:{summary['total_bytes_hashed']}")
+    print(f"  duration_seconds:  {summary['duration_seconds']}")
+    print(f"  timestamp_utc:     {baseline['baseline_timestamp_utc']}")
+
+    if summary["files_skipped"]:
+        print(f"\n  ⚠ {summary['files_skipped']} path(s) skipped (recorded in 'skipped'):",
+              file=sys.stderr)
+        for entry in baseline["skipped"]:
+            print(f"    SKIPPED {entry['path']} "
+                  f"[{entry['error_class']} errno={entry['errno']}] {entry['message']}",
+                  file=sys.stderr)
+
+    # Non-zero exit only on catastrophic failure: nothing at all could be
+    # hashed. A baseline with some skips is still a usable tamper-detection
+    # reference for every file that WAS readable.
+    if summary["files_hashed"] == 0:
+        print("✗ Catastrophic: zero files could be hashed.", file=sys.stderr)
+        return 1
     return 0
 
 

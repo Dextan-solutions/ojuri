@@ -471,7 +471,20 @@ silently mis-mounted.
 4. **SHA-256 baseline + verification** (`scripts/baseline_evidence.py`) — a
    post-hoc tamper-detection layer: hash every file once, re-hash later, and
    any ADDED/REMOVED/MODIFIED path is reported. Defends even against an
-   out-of-band change the mount flags didn't stop.
+   out-of-band change the mount flags didn't stop. The walk **tolerates
+   per-file and per-directory I/O errors** (e.g. `OSError [Errno 22]` on
+   NTFS/WOF-compressed files under the `ntfs3` mount, or `[Errno 5]` on
+   sectors outside the imaged region): the offending path is recorded in a
+   `skipped` list — `{path, error_class, errno, message}` — and the walk
+   continues; the process exits non-zero only on catastrophic failure (zero
+   files hashed). This is deliberate: baselining is tamper *detection*, not an
+   integrity *gate*. Aborting on the first unreadable path would forfeit
+   tamper-detection for the entire tree; instead every file that *was*
+   readable at baseline time stays protected, and every unreadable path is
+   explicitly accounted for (chain of custody requires that no path in the
+   source tree is silently dropped). Verified on `rocba_test`: 206,679 hashed,
+   18,618 skipped (see DECISIONS 2026-05-17 "Baseline evidence: per-file I/O
+   error tolerance").
 
 No single level is trusted alone; spoliation must defeat all four.
 

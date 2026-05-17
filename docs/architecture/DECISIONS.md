@@ -134,4 +134,50 @@ Prefetch `.pf`, `$MFT` 469 MB, `Users/fredr` + `Users/srl-h` NTUSER.DAT).
 
 ---
 
+## 2026-05-17 — Baseline evidence: per-file I/O error tolerance
+
+**Context:** First real-evidence baseline (`rocba_test`). `baseline_evidence.py`
+aborted on the first `OSError` raised while walking/hashing the tree, blocking
+the workflow. The brief anticipated the trigger would be `$GetCurrent/media`-type
+`OSError [Errno 5]` (Input/output error) — sectors outside the imaged region.
+**Empirically the cause was different** and is recorded here per the
+no-silent-deviation rule: on this Win10 volume mounted read-only via the
+in-kernel `ntfs3` driver (see 2026-05-17 "Robust read-only mount"), `$GetCurrent`
+hashed cleanly and **zero** `Errno 5` occurred. Instead **18,611 files raised
+`OSError [Errno 22]` (EINVAL)** — the well-known `ntfs3` behaviour of refusing
+reads of transparently NTFS/WOF-compressed files (`ntfs-3g` would decompress
+them) — concentrated under `Windows/` (15,843) and `Program Files*/` (2,722).
+Also observed: 6 × `Errno 13` (EACCES, incl. 2 `Windows.old/.../DriverStore`
+*directories* surfaced via the `os.walk` error callback) and 1 × `Errno 2`
+(ENOENT). The error-tolerance requirement is identical regardless of which
+errno fires.
+**Decision:** Catch `OSError` per-file (`lstat`/`open`/`read`) and per-directory
+(via `os.walk(onerror=…)`) during the walk. Maintain a `skipped` list in the
+output JSON with `{path, error_class, errno, message}`. Continue baselining the
+rest of the tree. Non-zero exit only on catastrophic failure (zero files
+hashed). Skipped count is printed to stderr so it is visible to the analyst.
+Legacy top-level keys (`total_files`, `total_bytes`, `algorithm`,
+`evidence_root`, `baseline_created_utc`) are retained alongside the new
+`mount_point`/`baseline_timestamp_utc`/`skipped`/`summary` keys so `--verify`
+and the evidence-layer integration test remain green.
+**Alternatives:** Crash on first error (rejected — incompatible with real
+evidence); silently skip without recording (rejected — chain-of-custody
+requires accountability for every file in the source tree). Re-mounting via
+`ntfs-3g` to decompress the EINVAL files (out of scope here — the evidence
+layer mount path is IMMUTABLE per ARCHITECTURE.md §7.3 and not edited by this
+task; logged below as a known limitation).
+**Rationale:** Forensic baselining is a tamper-detection mechanism, not an
+integrity gate. Files that cannot be hashed today must be recorded as such so
+any future change (including the file later becoming readable) is detectable.
+**Known limitation (flagged, not fixed here):** 18,611 NTFS/WOF-compressed
+system files are unhashed under the `ntfs3` mount. They are *accounted for* in
+`skipped` (chain of custody intact) but not yet *content-baselined*. A future
+decision should evaluate an `ntfs-3g` re-mount or a WOF-aware reader to close
+this gap; this is a driver limitation, not a defect in `baseline_evidence.py`.
+**Related:** ARCHITECTURE.md §7.3; `scripts/baseline_evidence.py`; verified
+end-to-end on `rocba_test` (**206,679 hashed, 18,618 skipped, 57,804,944,481
+bytes hashed**, 649.9 s, exit 0).
+
+---
+
 <!-- Append new decisions below this line. Do not edit entries above. -->
