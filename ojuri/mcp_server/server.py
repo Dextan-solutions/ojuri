@@ -15,9 +15,14 @@ from mcp.server.stdio import stdio_server
 from mcp import types
 
 from ojuri.mcp_server.audit import init_audit_logger, get_audit_logger
-from ojuri.mcp_server.backends.base import set_backend, set_prefetch_backend
+from ojuri.mcp_server.backends.base import (
+    set_backend,
+    set_prefetch_backend,
+    set_mft_backend,
+)
 from ojuri.mcp_server.backends.sift.registry import SiftRegistryBackend
 from ojuri.mcp_server.backends.sift.prefetch import SiftPrefetchBackend
+from ojuri.mcp_server.backends.sift.mft import SiftMftBackend
 from ojuri.mcp_server.primitives.hello_world import (
     HelloWorldInput,
     hello_world,
@@ -29,6 +34,10 @@ from ojuri.mcp_server.primitives.registry_autostarts import (
 from ojuri.mcp_server.primitives.prefetch_entries import (
     GetPrefetchEntriesInput,
     get_prefetch_entries,
+)
+from ojuri.mcp_server.primitives.mft_timeline import (
+    GetMftTimelineInput,
+    get_mft_timeline,
 )
 
 logger = logging.getLogger("ojuri.mcp_server")
@@ -74,6 +83,18 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema=GetPrefetchEntriesInput.model_json_schema(),
         ),
+        types.Tool(
+            name="get_mft_timeline",
+            description=(
+                "Returns NTFS filesystem timeline entries from a parsed $MFT file. "
+                "Each entry includes file/directory name, parent path, size, all "
+                "MAC(b) timestamps from Standard Information, and ADS flags. "
+                "Use optional start_time and end_time (ISO-8601 UTC) to narrow to a "
+                "window of interest. Results sorted by LastModified descending; "
+                "max_entries caps result count (default 1000, max 10000)."
+            ),
+            inputSchema=GetMftTimelineInput.model_json_schema(),
+        ),
     ]
 
 
@@ -112,6 +133,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         )
         return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
 
+    if name == "get_mft_timeline":
+        payload = GetMftTimelineInput(**arguments)
+        result = await get_mft_timeline(payload)
+        get_audit_logger().record(
+            tool_name="get_mft_timeline",
+            input_payload=payload.model_dump(),
+            output_payload=result.model_dump(),
+        )
+        return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -123,6 +154,8 @@ async def main() -> None:
     logger.info("SIFT backend registered.")
     set_prefetch_backend(SiftPrefetchBackend())
     logger.info("SIFT prefetch backend registered.")
+    set_mft_backend(SiftMftBackend())
+    logger.info("SIFT MFT backend registered.")
     init_audit_logger()
     logger.info("Audit logger initialised.")
     async with stdio_server() as (read_stream, write_stream):

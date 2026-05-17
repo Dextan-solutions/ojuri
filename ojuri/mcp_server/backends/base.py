@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     # Import only for type hints; avoid runtime cycle with primitives module.
     from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
     from ojuri.mcp_server.primitives.prefetch_entries import PrefetchEntry
+    from ojuri.mcp_server.primitives.mft_timeline import MftEntry
 
 
 class RegistryBackend(ABC):
@@ -110,3 +111,49 @@ def get_prefetch_backend() -> PrefetchBackend:
             "No prefetch backend registered. Call set_prefetch_backend() at server startup."
         )
     return _active_prefetch_backend
+
+
+# ---- MFT backend ----------------------------------------------------------
+
+
+class MftBackend(ABC):
+    """Abstract MFT-query interface."""
+
+    @abstractmethod
+    async def get_mft_timeline(
+        self,
+        mft_path: Path,
+        start_time: str | None,
+        end_time: str | None,
+        max_entries: int,
+    ) -> list["MftEntry"]:
+        """Parse an $MFT file and return entries within an optional time window.
+
+        Args:
+            mft_path: Path to the $MFT file.
+            start_time: ISO-8601 UTC lower bound (inclusive). None = no lower bound.
+            end_time: ISO-8601 UTC upper bound (inclusive). None = no upper bound.
+            max_entries: Maximum entries to return (cap 10000).
+
+        Returns:
+            list of MftEntry, sorted by last_modified descending.
+
+        Raises:
+            FileNotFoundError if mft_path doesn't exist.
+            BackendError on parse failure.
+        """
+        raise NotImplementedError
+
+
+_active_mft_backend: MftBackend | None = None
+
+
+def set_mft_backend(backend: MftBackend) -> None:
+    global _active_mft_backend
+    _active_mft_backend = backend
+
+
+def get_mft_backend() -> MftBackend:
+    if _active_mft_backend is None:
+        raise BackendError("No MFT backend registered. Call set_mft_backend() at server startup.")
+    return _active_mft_backend
