@@ -88,5 +88,29 @@ async def run_test() -> int:
     return 0
 
 
+def test_real_rocba_prefetch_partial_tolerance() -> None:
+    """Real rocba Prefetch dir contains at least one .pf libscca cannot parse
+    (empirically MOUSOCOREWORKER.EXE-4429AC2B.pf — "unsupported signature").
+    The sweep must still return the parseable entries AND record the failures
+    in `skipped` rather than aborting the whole primitive."""
+    import pytest
+
+    rocba = Path("/evidence/rocba_test/Windows/Prefetch")
+    if not rocba.is_dir():
+        pytest.skip(f"rocba evidence not present: {rocba}")
+
+    set_prefetch_backend(SiftPrefetchBackend())
+    payload = GetPrefetchEntriesInput(prefetch_path=str(rocba))
+    result = asyncio.run(get_prefetch_entries(payload))
+
+    assert result.total_entries == len(result.entries)
+    assert result.total_entries > 0, "expected some .pf files to parse"
+    assert len(result.skipped) > 0, \
+        "expected at least one unparseable .pf recorded in `skipped`"
+    for s in result.skipped:
+        assert s.filename.lower().endswith(".pf")
+        assert s.error_class and s.message
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(run_test()))

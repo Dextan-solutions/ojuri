@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pyscca
 
-from ojuri.mcp_server.backends.base import BackendError, PrefetchBackend
+from ojuri.mcp_server.backends.base import PrefetchBackend
 
 logger = logging.getLogger("ojuri.backends.sift.prefetch")
 
@@ -21,8 +21,11 @@ logger = logging.getLogger("ojuri.backends.sift.prefetch")
 class SiftPrefetchBackend(PrefetchBackend):
     """pyscca-based prefetch parser."""
 
-    async def get_prefetch_entries(self, prefetch_path: Path) -> list:
-        from ojuri.mcp_server.primitives.prefetch_entries import PrefetchEntry
+    async def get_prefetch_entries(self, prefetch_path: Path) -> tuple[list, list]:
+        from ojuri.mcp_server.primitives.prefetch_entries import (
+            PrefetchEntry,
+            SkippedPrefetch,
+        )
 
         if not prefetch_path.exists():
             raise FileNotFoundError(f"prefetch_path not found: {prefetch_path}")
@@ -36,9 +39,10 @@ class SiftPrefetchBackend(PrefetchBackend):
 
         if not pf_files:
             logger.warning("No .pf files found at %s", prefetch_path)
-            return []
+            return [], []
 
         results: list[PrefetchEntry] = []
+        skipped: list[SkippedPrefetch] = []
         for pf in pf_files:
             try:
                 entry = await asyncio.to_thread(self._parse_one, pf)
@@ -46,10 +50,19 @@ class SiftPrefetchBackend(PrefetchBackend):
                 logger.info("Parsed prefetch: %s executable=%s run_count=%d",
                             pf.name, entry.executable_name, entry.run_count)
             except Exception as e:
-                raise BackendError(f"Failed to parse {pf}: {type(e).__name__}: {e}") from e
+                # A single corrupt/unsupported .pf (e.g. libscca "unsupported
+                # signature") must not abort the whole sweep. Record it and
+                # continue — real forensic tools tolerate partial failures.
+                skipped.append(SkippedPrefetch(
+                    filename=pf.name,
+                    error_class=type(e).__name__,
+                    message=str(e),
+                ))
+                logger.warning("Skipped unparseable prefetch %s: %s: %s",
+                               pf.name, type(e).__name__, e)
 
         results.sort(key=lambda e: (e.executable_name.lower(), -(e.last_run_time_unix or 0)))
-        return results
+        return results, skipped
 
     @staticmethod
     def _parse_one(pf_path: Path):

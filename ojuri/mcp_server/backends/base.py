@@ -14,7 +14,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # Import only for type hints; avoid runtime cycle with primitives module.
     from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
-    from ojuri.mcp_server.primitives.prefetch_entries import PrefetchEntry
+    from ojuri.mcp_server.primitives.prefetch_entries import (
+        PrefetchEntry,
+        SkippedPrefetch,
+    )
     from ojuri.mcp_server.primitives.mft_timeline import MftEntry
     from ojuri.mcp_server.primitives.list_evidence_artefacts import (
         DiscoveredEvidence,
@@ -84,18 +87,22 @@ class PrefetchBackend(ABC):
     (.pf) files and return typed PrefetchEntry records."""
 
     @abstractmethod
-    async def get_prefetch_entries(self, prefetch_path: Path) -> list["PrefetchEntry"]:
+    async def get_prefetch_entries(
+        self, prefetch_path: Path
+    ) -> tuple[list["PrefetchEntry"], list["SkippedPrefetch"]]:
         """Parse Prefetch files at prefetch_path.
 
         Args:
             prefetch_path: either a single .pf file OR a directory of .pf files.
 
         Returns:
-            list of PrefetchEntry sorted by (executable_name, last_run_time desc).
+            (entries, skipped). entries is a list of PrefetchEntry sorted by
+            (executable_name, last_run_time desc). skipped is one SkippedPrefetch
+            per .pf file that failed to parse — a single bad file never aborts
+            the sweep.
 
         Raises:
             FileNotFoundError if prefetch_path does not exist.
-            BackendError if parsing fails irrecoverably.
         """
         raise NotImplementedError
 

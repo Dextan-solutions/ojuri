@@ -52,15 +52,27 @@ class PrefetchEntry(BaseModel):
     prefetch_source: str = Field(..., description="Absolute path of the .pf file this entry was read from.")
 
 
+class SkippedPrefetch(BaseModel):
+    filename: str = Field(..., description="The .pf filename that could not be parsed.")
+    error_class: str = Field(..., description="Exception class name raised by the parser.")
+    message: str = Field(..., description="Exception message text.")
+
+
 class GetPrefetchEntriesOutput(BaseModel):
     primitive_name: Literal["get_prefetch_entries"] = "get_prefetch_entries"
     total_entries: int = Field(..., description="Number of prefetch files successfully parsed.")
     entries: list[PrefetchEntry] = Field(..., description="One entry per parsed .pf file.")
+    skipped: list[SkippedPrefetch] = Field(
+        default_factory=list,
+        description="One record per .pf file that failed to parse; the rest still parsed.",
+    )
 
 
 async def get_prefetch_entries(payload: GetPrefetchEntriesInput) -> GetPrefetchEntriesOutput:
     backend = get_prefetch_backend()
     path = Path(payload.prefetch_path)
     logger.info("get_prefetch_entries path=%s", path)
-    entries = await backend.get_prefetch_entries(path)
-    return GetPrefetchEntriesOutput(total_entries=len(entries), entries=entries)
+    entries, skipped = await backend.get_prefetch_entries(path)
+    return GetPrefetchEntriesOutput(
+        total_entries=len(entries), entries=entries, skipped=skipped
+    )
