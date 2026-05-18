@@ -36,9 +36,14 @@ class GetRegistryAutostartsInput(BaseModel):
         if v is None:
             return None
         # Reject shell metacharacters and traversal patterns.
-        dangerous = (";", "|", "&", "`", "$", "(", ")", "\n", "\r")
+        # '$' is intentionally NOT in this list: it is a legitimate NTFS
+        # metadata-file naming convention ($MFT, $LogFile, $Bitmap). Shell
+        # substitution forms ('$(' and '${') are rejected explicitly below.
+        dangerous = (";", "|", "&", "`", "(", ")", "\n", "\r")
         if any(d in v for d in dangerous):
             raise ValueError(f"path contains dangerous characters: {v!r}")
+        if "$(" in v or "${" in v:
+            raise ValueError(f"path contains shell substitution: {v!r}")
         if ".." in v:
             raise ValueError(f"path traversal detected: {v!r}")
         return v

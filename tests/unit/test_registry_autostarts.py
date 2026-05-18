@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from ojuri.mcp_server.backends.sift.registry import SiftRegistryBackend
+from ojuri.mcp_server.primitives.registry_autostarts import GetRegistryAutostartsInput
 
 
 # Real RegRipper 'run' plugin output format, captured empirically.
@@ -77,8 +80,32 @@ def test_parse_completely_empty_output() -> None:
     assert entries == []
 
 
+def test_dollar_sign_in_ntfs_name_accepted() -> None:
+    inp = GetRegistryAutostartsInput(software_hive_path="/evidence/rocba_test/$MFT")
+    assert inp.software_hive_path == "/evidence/rocba_test/$MFT"
+
+
+def test_command_substitution_rejected() -> None:
+    try:
+        GetRegistryAutostartsInput(software_hive_path="/evidence/$(whoami)/SOFTWARE")
+    except ValidationError:
+        return
+    raise AssertionError("expected reject for command substitution")
+
+
+def test_parameter_expansion_rejected() -> None:
+    try:
+        GetRegistryAutostartsInput(software_hive_path="/evidence/${HOME}/SOFTWARE")
+    except ValidationError:
+        return
+    raise AssertionError("expected reject for parameter expansion")
+
+
 if __name__ == "__main__":
     test_parse_run_output_extracts_quoted_entries()
     test_parse_empty_runonceex_returns_no_entries()
     test_parse_completely_empty_output()
+    test_dollar_sign_in_ntfs_name_accepted()
+    test_command_substitution_rejected()
+    test_parameter_expansion_rejected()
     print("All unit tests passed.")

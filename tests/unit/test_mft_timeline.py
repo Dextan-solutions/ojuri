@@ -22,6 +22,27 @@ def test_path_with_shell_metachar_rejected() -> None:
         raise AssertionError(f"expected reject for {bad!r}")
 
 
+def test_dollar_sign_in_ntfs_name_accepted() -> None:
+    inp = GetMftTimelineInput(mft_path="/evidence/rocba_test/$MFT")
+    assert inp.mft_path == "/evidence/rocba_test/$MFT"
+
+
+def test_command_substitution_rejected() -> None:
+    try:
+        GetMftTimelineInput(mft_path="/evidence/$(whoami)/file")
+    except ValidationError:
+        return
+    raise AssertionError("expected reject for command substitution")
+
+
+def test_parameter_expansion_rejected() -> None:
+    try:
+        GetMftTimelineInput(mft_path="/evidence/${HOME}/file")
+    except ValidationError:
+        return
+    raise AssertionError("expected reject for parameter expansion")
+
+
 def test_path_traversal_rejected() -> None:
     try:
         GetMftTimelineInput(mft_path="/evidence/../etc/passwd")
@@ -55,6 +76,9 @@ def test_time_fields_optional() -> None:
 if __name__ == "__main__":
     test_valid_inputs_accepted()
     test_path_with_shell_metachar_rejected()
+    test_dollar_sign_in_ntfs_name_accepted()
+    test_command_substitution_rejected()
+    test_parameter_expansion_rejected()
     test_path_traversal_rejected()
     test_max_entries_clamped()
     test_min_max_entries()
