@@ -257,3 +257,36 @@ This is the fourth backend pattern (in addition to subprocess+regex,
 direct library, subprocess+CSV).
 Related: ARCHITECTURE.md §5.2, §8; ojuri/mcp_server/primitives/list_evidence_artefacts.py;
 ojuri/agents/loop.py main(); verified end-to-end on rocba_test.
+
+## 2026-05-18 — Permission model: --allowedTools per agent
+Context: First real agent run (run1, evidence rocba_test) failed with
+Investigator unable to call any MCP primitive. Empirical investigation
+showed claude -p (non-interactive) defaults to DENYING tool calls
+because there's no human to approve them. Permission denial returned
+immediately without surfacing as a JSON parse error — instead Claude
+returned a polite "tool was blocked" message in the result field.
+Decision: Use --allowedTools <list> per agent rather than the broader
+--dangerously-skip-permissions:
+- Investigator: mcp__ojuri__list_evidence_artefacts, mcp__ojuri__get_registry_autostarts,
+  mcp__ojuri__get_prefetch_entries, mcp__ojuri__get_mft_timeline, Write
+- Auditor: Read, Write (plus existing --strict-mcp-config)
+The Investigator can call only the 4 forensic primitives plus file Write;
+it cannot call Bash, Edit, web fetch, or any other built-in tool. The
+Auditor cannot call MCP tools at all (allowed list excludes them; also
+--strict-mcp-config means none are loaded).
+Alternatives:
+- --dangerously-skip-permissions: works but bypasses all permission
+  checks. Too broad. If the prompt is somehow manipulated to invoke
+  Bash, it would execute. The narrower --allowedTools defends against
+  prompt-injection escalation.
+- Use Claude Code interactive mode (no -p flag): requires human approval
+  per tool call. Incompatible with autonomous orchestrator.
+- Pre-approve tools in .claude/settings.local.json: works but mixes
+  test-environment trust with orchestrator-environment trust; less
+  auditable.
+Rationale: Surgical permission per agent matches the existing trust
+boundary design (Pattern B in §8). The Investigator has access to
+exactly what it needs; the Auditor has even less.
+Related: ojuri/agents/loop.py (run_investigator, run_auditor cmd lists);
+ARCHITECTURE.md §8 (Reasoning Layer; add note about --allowedTools);
+first real agent run on rocba_test.

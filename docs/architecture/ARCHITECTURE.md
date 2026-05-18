@@ -559,6 +559,14 @@ duplicated here.** Summary of the selected design:
   output; the orchestrator passes only `--evidence-root`, never per-artefact
   paths. Calling an analytical primitive before discovery is defined as an
   error in the Investigator system prompt.
+- **Surgical permission grant (`--allowedTools`):** each agent's subprocess
+  is launched with `--allowedTools` restricting it to the precise tools it
+  needs. The Investigator may call the 4 Ojuri MCP primitives plus `Write`
+  (to record findings); the Auditor may only call `Read` and `Write` (and
+  `--strict-mcp-config` ensures no MCP tools are loaded). This is required
+  because `claude -p` defaults to *denying* tool calls (no human to approve),
+  and it prevents prompt-injection escalation: a manipulated Investigator
+  prompt cannot trigger arbitrary tool execution (e.g. `Bash`, `Edit`).
 - **Option A (confidence downgrade allowed):** a disputed finding may be
   revised, supported with more evidence, **or** downgraded to `low` confidence
   with explanation — never silently deleted. A downgraded finding is *still

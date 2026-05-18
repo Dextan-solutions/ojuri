@@ -13,6 +13,13 @@ Architecture:
     no-tool-access constraint is architecturally enforced, not prompted.
   * The Investigator tool list is DYNAMIC: it is derived from the running
     server module's list_tools(), so adding a primitive updates the prompt.
+  * Both agents are launched with --allowedTools for a surgical permission
+    grant (claude -p defaults to DENYING tool calls — there is no human to
+    approve them). The Investigator may call the 4 Ojuri MCP primitives
+    (list_evidence_artefacts, get_registry_autostarts, get_prefetch_entries,
+    get_mft_timeline) plus Write. The Auditor may only call Read and Write,
+    and additionally runs with --strict-mcp-config so no MCP tools are even
+    loaded. This prevents prompt-injection escalation into arbitrary tools.
 
 Usage:
     python -m ojuri.agents.loop \\
@@ -361,7 +368,23 @@ async def run_investigator(prompt: str, output_dir: Path, iteration: int) -> Pat
     # Auditor see the same chain.
     env["OJURI_AUDIT_LOG"] = str(output_dir / "audit.log")
 
-    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    cmd = [
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        # Surgical permission grant: the Investigator may call exactly the 4
+        # Ojuri MCP primitives plus Write (to record findings_iterN.json).
+        # claude -p defaults to DENYING tool calls (no human to approve), so
+        # the allowed list is mandatory, not optional hardening.
+        "--allowedTools",
+        "mcp__ojuri__list_evidence_artefacts",
+        "mcp__ojuri__get_registry_autostarts",
+        "mcp__ojuri__get_prefetch_entries",
+        "mcp__ojuri__get_mft_timeline",
+        "Write",
+    ]
     stdout = await _run_claude(
         cmd,
         cwd=REPO_ROOT,
@@ -409,6 +432,12 @@ async def run_auditor(
         prompt,
         "--output-format",
         "json",
+        # Surgical permission grant: the Auditor may only Read (audit log /
+        # findings) and Write (verdicts). No MCP tools in the allowed list;
+        # --strict-mcp-config below also ensures none are even loaded.
+        "--allowedTools",
+        "Read",
+        "Write",
         "--strict-mcp-config",  # zero MCP servers (none passed via --mcp-config)
         "--add-dir",
         str(Path(audit_log_path).parent),
