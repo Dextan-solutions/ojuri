@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     # Import only for type hints; avoid runtime cycle with primitives module.
     from ojuri.mcp_server.primitives.registry_autostarts import AutostartEntry
+    from ojuri.mcp_server.primitives.user_autostarts import UserAutostartEntry
     from ojuri.mcp_server.primitives.prefetch_entries import (
         PrefetchEntry,
         SkippedPrefetch,
@@ -47,6 +48,28 @@ class RegistryBackend(ABC):
 
         Raises:
             FileNotFoundError if a required hive path does not exist.
+            BackendError if the backend's tool invocation fails irrecoverably.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_user_autostarts(
+        self, ntuser_hive_path: Path
+    ) -> list["UserAutostartEntry"]:
+        """Return per-user (HKCU) autostart entries from a single NTUSER.DAT hive.
+
+        Args:
+            ntuser_hive_path: path to one user's NTUSER.DAT (contains the
+                HKCU Run/RunOnce/RunOnceEx keys). The path comes from
+                list_evidence_artefacts discovery; call once per user.
+
+        Returns:
+            list of UserAutostartEntry, sorted by (mechanism, name) for
+            determinism. An empty list is a valid result (no per-user
+            persistence configured) and is itself a finding.
+
+        Raises:
+            FileNotFoundError if ntuser_hive_path does not exist.
             BackendError if the backend's tool invocation fails irrecoverably.
         """
         raise NotImplementedError

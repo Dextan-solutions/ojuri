@@ -290,3 +290,25 @@ exactly what it needs; the Auditor has even less.
 Related: ojuri/agents/loop.py (run_investigator, run_auditor cmd lists);
 ARCHITECTURE.md §8 (Reasoning Layer; add note about --allowedTools);
 first real agent run on rocba_test.
+
+## 2026-05-18 — User-scope persistence primitive (get_user_autostarts)
+Context: First real agent run (run2) revealed F-002 — no Ojuri primitive
+parses NTUSER.DAT (per-user / HKCU), so user-account-scoped login
+persistence is invisible. The case question "what persistence is
+configured for the fredr account?" cannot be answered by HKLM data alone.
+Decision: Add get_user_autostarts(ntuser_hive_path) as the 5th primitive.
+Mirrors get_registry_autostarts (same rip.pl backend, same 'run' plugin
+— rip.pl auto-detects hive root). Returns Run/RunOnce/RunOnceEx entries
+from the user hive. Investigator's discovery output already provides
+NTUSER.DAT paths per user.
+Alternatives: Extend get_registry_autostarts with an optional
+ntuser_hive parameter (rejected — conflates HKLM and HKCU scopes in one
+tool, harder for Investigator to reason about); separate output schema
+would still be needed.
+Rationale: Separate primitive with clear scope. Backend strategy A
+(subprocess+regex) reused. Investigator can choose HKLM, HKCU, or both
+based on the case question.
+Out of scope for v0: Winlogon (Shell, Userinit), Shell Folders Startup,
+and other user-scope persistence vectors — roadmap.
+Related: ARCHITECTURE.md §5.2 (new spec); ojuri/mcp_server/primitives/user_autostarts.py;
+ojuri/agents/investigator/system_prompt.md (HKCU guidance added).

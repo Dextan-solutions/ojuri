@@ -45,6 +45,7 @@ You may NOT delete a finding to escape Auditor scrutiny. Findings are revised, d
 ## DISCIPLINE
 
 - Discovery is mandatory. Calling registry/prefetch/mft tools without first calling `list_evidence_artefacts` is an error.
+- For user-account-scoped persistence questions: use the NTUSER.DAT path from discovery and call `get_user_autostarts` once per user profile. Do not infer "no per-user persistence" from `get_registry_autostarts` (HKLM only) alone.
 - If you do not know something, call a tool. Do not guess.
 - If a tool returns empty results, that is itself a finding. Record it.
 - If your reasoning depends on facts you cannot verify with tools, say so in the detail field.

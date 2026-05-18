@@ -33,6 +33,10 @@ from ojuri.mcp_server.primitives.registry_autostarts import (
     GetRegistryAutostartsInput,
     get_registry_autostarts,
 )
+from ojuri.mcp_server.primitives.user_autostarts import (
+    GetUserAutostartsInput,
+    get_user_autostarts,
+)
 from ojuri.mcp_server.primitives.prefetch_entries import (
     GetPrefetchEntriesInput,
     get_prefetch_entries,
@@ -77,6 +81,16 @@ async def list_tools() -> list[types.Tool]:
                 "hive source, and the LastWrite time of the registry key."
             ),
             inputSchema=GetRegistryAutostartsInput.model_json_schema(),
+        ),
+        types.Tool(
+            name="get_user_autostarts",
+            description=(
+                "Parses per-user (HKCU) login persistence from an NTUSER.DAT hive "
+                "(Run/RunOnce/RunOnceEx keys). The user's NTUSER.DAT path comes from "
+                "list_evidence_artefacts. Call this primitive once per user when "
+                "investigating user-account-scoped persistence."
+            ),
+            inputSchema=GetUserAutostartsInput.model_json_schema(),
         ),
         types.Tool(
             name="get_prefetch_entries",
@@ -137,6 +151,16 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
         result = await get_registry_autostarts(payload)
         get_audit_logger().record(
             tool_name="get_registry_autostarts",
+            input_payload=payload.model_dump(),
+            output_payload=result.model_dump(),
+        )
+        return [types.TextContent(type="text", text=result.model_dump_json(indent=2))]
+
+    if name == "get_user_autostarts":
+        payload = GetUserAutostartsInput(**arguments)
+        result = await get_user_autostarts(payload)
+        get_audit_logger().record(
+            tool_name="get_user_autostarts",
             input_payload=payload.model_dump(),
             output_payload=result.model_dump(),
         )

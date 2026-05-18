@@ -77,6 +77,92 @@ class SiftRegistryBackend(RegistryBackend):
         results.sort(key=lambda e: (e.mechanism, e.name.lower()))
         return results
 
+    async def get_user_autostarts(self, ntuser_hive_path: Path) -> list:
+        """Run the per-user autostart plugins against a single NTUSER.DAT hive.
+
+        rip.pl is hive-aware: the 'run' and 'runonceex' plugins auto-detect the
+        hive root, so the same plugins that read HKLM\\Software in a SOFTWARE
+        hive read HKCU\\Software in an NTUSER.DAT. The 'run' plugin emits both
+        the Run and RunOnce keys; we recover Run-vs-RunOnce from the key header
+        line. 'runonceex' is always RunOnceEx.
+        """
+        # Lazy import to avoid circular reference at module load.
+        from ojuri.mcp_server.primitives.user_autostarts import UserAutostartEntry
+
+        if not ntuser_hive_path.is_file():
+            raise FileNotFoundError(f"NTUSER.DAT hive not found: {ntuser_hive_path}")
+
+        # Derive the profile owner from the path: .../Users/fredr/NTUSER.DAT -> "fredr".
+        username = ntuser_hive_path.parent.name or None
+
+        results: list[UserAutostartEntry] = []
+        for plugin in ("run", "runonceex"):
+            raw = await self._run_plugin(plugin, ntuser_hive_path)
+            results.extend(
+                self._parse_user_plugin_output(raw, plugin, ntuser_hive_path, username)
+            )
+
+        # Deterministic sort: by mechanism, then name.
+        results.sort(key=lambda e: (e.mechanism, e.name.lower()))
+        return results
+
+    # Detects the registry-key header line so 'run' plugin output can be split
+    # into Run vs RunOnce. Longest keyword first so RunOnceEx/RunOnce win over Run.
+    _HEADER_RE = re.compile(r"(?i)(?:\\|^)(RunOnceEx|RunOnce|Run)\s*$")
+    _HEADER_MECHANISM = {"run": "Run", "runonce": "RunOnce", "runonceex": "RunOnceEx"}
+
+    def _parse_user_plugin_output(
+        self, raw_output: str, plugin_name: str, hive_path: Path, username: str | None
+    ) -> list:
+        """Parse RegRipper text output for a single NTUSER plugin into
+        UserAutostartEntry records.
+
+        Same tolerant 'name - "value"' scan as _parse_plugin_output, plus
+        key-header tracking: under the 'run' plugin a `...\\Run` header means
+        the following entries are Run, a `...\\RunOnce` header means RunOnce.
+        The 'runonceex' plugin is always RunOnceEx.
+        """
+        from ojuri.mcp_server.primitives.user_autostarts import UserAutostartEntry
+
+        entries: list[UserAutostartEntry] = []
+        current_last_write: str | None = None
+        current_mechanism = "RunOnceEx" if plugin_name == "runonceex" else "Run"
+
+        lastwrite_re = re.compile(r"LastWrite\s*Time\s*[:=]?\s*(.+)", re.IGNORECASE)
+        entry_re = re.compile(r'^\s+(.+?)\s+-\s+"?(.+?)"?\s*$')
+
+        for line in raw_output.splitlines():
+            # Key-header detection only matters for the 'run' plugin, which
+            # emits both Run and RunOnce. Header lines are not indented and the
+            # entry/trailer lines either are indented or have a trailing suffix.
+            if (
+                plugin_name == "run"
+                and not line.startswith((" ", "\t"))
+                and "\\" in line
+            ):
+                hm = self._HEADER_RE.search(line.strip())
+                if hm:
+                    current_mechanism = self._HEADER_MECHANISM[hm.group(1).lower()]
+                    continue
+            m = lastwrite_re.search(line)
+            if m:
+                current_last_write = m.group(1).strip()
+                continue
+            m = entry_re.match(line)
+            if m:
+                name = m.group(1).strip()
+                value = m.group(2).strip()
+                if name and value:
+                    entries.append(UserAutostartEntry(
+                        name=name,
+                        path=value,
+                        last_modified=current_last_write,
+                        mechanism=current_mechanism,
+                        hive_source=str(hive_path),
+                        username=username,
+                    ))
+        return entries
+
     async def _run_plugin(self, plugin_name: str, hive_path: Path) -> str:
         """Invoke rip.pl with the named plugin against the named hive. Returns stdout text."""
         cmd = [str(self.rip_path), "-r", str(hive_path), "-p", plugin_name]

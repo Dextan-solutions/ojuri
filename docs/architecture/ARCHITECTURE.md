@@ -182,18 +182,19 @@ do anything the code below the boundary did not verify and record.
 
 ## 5. Capability Layer: Forensic Primitives
 
-### 5.1 Catalogue (28 analytical designed + 1 discovery, 4 implemented in MVP)
+### 5.1 Catalogue (29 analytical designed + 1 discovery, 5 implemented in MVP)
 
 A *primitive* answers one forensic question with a typed result. The full
-design catalogue is 28 analytical primitives plus 1 discovery primitive
+design catalogue is 29 analytical primitives plus 1 discovery primitive
 (`list_evidence_artefacts`, the mandatory first call that locates artefacts
-for the rest); 4 are implemented end-to-end. Status legend:
+for the rest); 5 are implemented end-to-end. Status legend:
 **✓ implemented** · **○ designed, not yet built**.
 
 | # | Primitive | Question it answers | Status |
 |---|-----------|---------------------|--------|
 | D | `list_evidence_artefacts` | Where are the canonical forensic artefacts on this mount? | ✓ |
-| 1 | `get_registry_autostarts` | What is configured to autostart? | ✓ |
+| 1 | `get_registry_autostarts` | What is configured to autostart (machine / HKLM)? | ✓ |
+| 1a | `get_user_autostarts` | What per-user (HKCU) login persistence is configured? | ✓ |
 | 2 | `get_prefetch_entries` | What programs ran, when, how often? | ✓ |
 | 3 | `get_mft_timeline` | What is the NTFS filesystem timeline? | ✓ |
 | 4 | `get_scheduled_tasks` | What scheduled tasks exist? | ○ |
@@ -223,9 +224,11 @@ for the rest); 4 are implemented end-to-end. Status legend:
 | 28 | `get_memory_netscan` | What network artefacts in a memory image? | ○ |
 
 The naming, typed-I/O, validation, and audit pattern is identical for all of
-them; the four implemented ones prove the pattern across four backend
-strategies (§5.3). The remaining 25 analytical primitives are roadmap (§12),
-not architectural unknowns.
+them; the five implemented ones prove the pattern across four backend
+strategies (§5.3) — `get_user_autostarts` reuses Strategy A, demonstrating
+that a second primitive slots into an existing strategy with no boundary
+change. The remaining 25 analytical primitives are roadmap (§12), not
+architectural unknowns.
 
 ### 5.2 Implemented primitives (full spec)
 
@@ -252,6 +255,42 @@ not architectural unknowns.
   `EricZimmerman/Registry` corpus (MIT-licensed, redistributable).
 - **Coverage:** Week-2 Task 1 covers Run keys, RunOnceEx, Service DLL
   autostarts. Future expansion: Winlogon shell, AppInit_DLLs, IFEO.
+
+#### 5.2.5 `get_user_autostarts`
+
+- **Source:** `ojuri/mcp_server/primitives/user_autostarts.py`
+- **Role:** the **per-user (HKCU)** companion to `get_registry_autostarts`
+  (which is machine-scope / HKLM only). The Run/RunOnce/RunOnceEx keys under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion` live in each user's
+  `NTUSER.DAT`, not in any machine hive — so user-account-scoped login
+  persistence is invisible to `get_registry_autostarts`. Surfaced by the
+  first real agent run (run2, finding F-002); see DECISIONS 2026-05-18.
+- **Input (`GetUserAutostartsInput`):**
+  - `ntuser_hive_path: str` — absolute path to one user's `NTUSER.DAT`, from
+    `list_evidence_artefacts` (`user_profiles[].ntuser_dat`). Single hive, not
+    a list: the orchestrator calls once per user.
+  - Validated by the same `field_validator` as `get_registry_autostarts`,
+    rejecting shell metacharacters (`; | & \` ( ) \n \r`), `$(`/`${` shell
+    substitution, and `..` traversal — `$` alone is allowed (NTFS naming).
+- **Output (`GetUserAutostartsOutput`):**
+  - `primitive_name: "get_user_autostarts"` (literal, anti-spoof)
+  - `total_entries: int`
+  - `entries: list[UserAutostartEntry]` where each entry is
+    `{name, path, last_modified|None, mechanism, hive_source, username|None}`
+    and `mechanism ∈ {Run, RunOnce, RunOnceEx}`; sorted by
+    `(mechanism, name)`. `username` is derived from the hive path's parent
+    directory (`.../Users/fredr/NTUSER.DAT` → `fredr`). An empty list is a
+    valid result and is itself a finding (no per-user persistence).
+  - `ntuser_hive_path: str` — echoed input.
+- **Backend:** SIFT — `rip.pl` (RegRipper3) `run` + `runonceex` plugins run
+  as a subprocess; rip.pl is hive-aware (auto-detects HKCU vs HKLM root), so
+  the same plugins read `NTUSER.DAT`. Output parsed by regex into typed
+  records, recovering Run-vs-RunOnce from the key header line.
+  *(Strategy A: subprocess + regex — reused, not a new strategy.)*
+- **Verification:** integration test against `rocba_test` fredr `NTUSER.DAT`
+  (Layer-1 architectural invariants; Layer-2 empirical ground truth).
+- **Out of scope for v0 (roadmap):** Winlogon (Shell, Userinit) and the
+  Shell Folders `Startup` user-scope persistence vectors.
 
 #### 5.2.2 `get_prefetch_entries`
 
@@ -343,17 +382,19 @@ not architectural unknowns.
 The architectural insight the MVP proves: **the capability layer is
 tool-agnostic.** A primitive defines a typed question and a typed answer; *how*
 the answer is produced is a backend concern hidden behind the trust boundary.
-The four implemented primitives deliberately use four different strategies:
+The five implemented primitives deliberately exercise four different
+strategies — `get_user_autostarts` reuses Strategy A alongside
+`get_registry_autostarts`, proving a strategy carries more than one primitive:
 
 | Strategy | Primitive | Mechanism | Why chosen |
 |----------|-----------|-----------|------------|
-| A. Subprocess + regex | `get_registry_autostarts` | `rip.pl` multi-plugin, parse stdout | RegRipper is the de-facto registry tool; no clean library |
+| A. Subprocess + regex | `get_registry_autostarts`, `get_user_autostarts` | `rip.pl` multi-plugin, parse stdout | RegRipper is the de-facto registry tool; no clean library |
 | B. Direct library call | `get_prefetch_entries` | `pyscca` in-process | Official binding, no .NET, no subprocess, license-clean |
 | C. Subprocess + CSV | `get_mft_timeline` | `MFTECmd --csv`, BOM-aware parse | Mature, clean CSV; analyzeMFT was empirically broken |
 | D. Pure-Python filesystem walk | `list_evidence_artefacts` | `os`/`pathlib` read-only walk, no subprocess | Discovery needs no external tool; stdlib-only ⇒ runs on every platform |
 
-Same trust boundary, same Pydantic-typed output contract, four
-implementations. This is why the remaining 25 primitives are roadmap and not
+Same trust boundary, same Pydantic-typed output contract, five primitives
+across four implementations. This is why the remaining 25 primitives are roadmap and not
 risk: each new one slots into whichever of these four patterns fits its tool,
 behind an unchanged boundary, and inherits audit + validation for free.
 

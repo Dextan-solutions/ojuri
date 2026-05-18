@@ -125,6 +125,7 @@ pip install -r requirements.txt
 |-----------|:-----:|:-----:|:-------:|---------------------|
 | `list_evidence_artefacts` | ✓ | ✓ | ✓ | **None — Python stdlib only** |
 | `get_registry_autostarts` | ✓ | ✓ | ✓ | RegRipper3 (`rip.pl`) |
+| `get_user_autostarts` | ✓ | ✓ | ✓ | RegRipper3 (`rip.pl`) |
 | `get_prefetch_entries` | ✓ | ✓ | ✓ | `pyscca` (libscca binding) |
 | `get_mft_timeline` | ✓ | ✓ | ✓ | MFTECmd |
 
