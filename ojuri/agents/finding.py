@@ -54,7 +54,10 @@ class FindingClaim(BaseModel):
     # Empirically bumped 200 -> 500 after run6: nuanced summaries need room
     # (same iter2 parse crash as FindingCitation.excerpt).
     summary: str = Field(..., min_length=1, max_length=500, description="One-line claim.")
-    detail: str = Field(..., min_length=1, max_length=2000, description="Reasoning narrative.")
+    # Empirically bumped 2000 -> 5000 after a run6 follow-up: the Investigator's
+    # iteration-rebinding narrative (explaining how this iteration's audit
+    # evidence supersedes prior iterations') exceeded 2000 chars.
+    detail: str = Field(..., min_length=1, max_length=5000, description="Reasoning narrative.")
     confidence: Literal["high", "medium", "low"] = Field(
         ..., description="Investigator's confidence in this claim."
     )

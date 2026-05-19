@@ -126,6 +126,19 @@ def test_summary_501_chars_rejected() -> None:
         )
 
 
+def test_detail_5000_chars_accepted() -> None:
+    FindingClaim(
+        finding_id="F-001", summary="s", detail="d" * 5000, confidence="high"
+    )
+
+
+def test_detail_5001_chars_rejected() -> None:
+    with pytest.raises(ValidationError):
+        FindingClaim(
+            finding_id="F-001", summary="s", detail="d" * 5001, confidence="high"
+        )
+
+
 def test_findings_report_round_trip() -> None:
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "findings_iter1.json"
@@ -160,6 +173,8 @@ if __name__ == "__main__":
     test_excerpt_501_chars_rejected()
     test_summary_500_chars_accepted()
     test_summary_501_chars_rejected()
+    test_detail_5000_chars_accepted()
+    test_detail_5001_chars_rejected()
     test_findings_report_round_trip()
     test_findings_report_canonical_json()
     print("All finding-schema unit tests passed.")

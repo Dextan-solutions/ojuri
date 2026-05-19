@@ -381,3 +381,17 @@ Decision: Three fixes in one commit:
 
 Related: ojuri/agents/loop.py (allowedTools); ojuri/agents/finding.py
 (schema bumps); tests/unit/test_finding.py.
+
+## 2026-05-19 — Bump FindingClaim.detail 2000 → 5000 (follow-up to run6)
+Context: After commit 3e4c503 (which bumped excerpt and summary 200→500),
+a follow-up run hit findings.0.claim.detail > 2000 chars. The Investigator
+was explaining iteration-rebinding logic in the detail field and exceeded
+the 2000-char cap.
+Decision: Bump max_length 2000 → 5000. Same empirical pattern as the
+prior bumps. Comment in the schema notes the run6 follow-up surfaced this.
+Rationale: Iteration-rebinding language (where the Investigator explains
+how the current iteration's audit evidence supersedes prior iterations')
+adds 500-1500 chars beyond a normal forensic detail. 5000 provides
+sufficient room without unbounded growth.
+Related: ojuri/agents/finding.py (FindingClaim.detail); tests/unit/test_finding_schema.py
+(2 new boundary tests).
