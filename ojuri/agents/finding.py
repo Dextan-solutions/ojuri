@@ -22,6 +22,12 @@ from pydantic import BaseModel, ConfigDict, Field
 # Shared id pattern: F- followed by exactly three digits, e.g. F-001.
 FINDING_ID_PATTERN = r"^F-\d{3}$"
 
+# Narrative fields use a generous 20000-char safety ceiling rather than tight
+# caps. Empirical runs (DECISIONS 2026-05-19) showed that 200/500/2000/3000
+# limits all fired in production; the issue was the cap principle, not the
+# value. Identifier fields retain tight constraints because they're structured.
+NARRATIVE_MAX = 20000
+
 
 class FindingCitation(BaseModel):
     """A pointer from a claim to a specific audit-log entry."""
@@ -35,13 +41,11 @@ class FindingCitation(BaseModel):
         min_length=1,
         description='Path into the tool output, e.g. "entries[3].file_name".',
     )
-    # Empirically bumped 200 -> 500 after run6: real registry-output JSON
-    # (e.g. a full SecurityHealth Run entry) exceeded 200 chars and crashed
-    # the orchestrator while parsing iter2 findings.
+    # Narrative: verbatim tool output, length is unbounded by nature.
     excerpt: str = Field(
         ...,
-        max_length=500,
-        description="Verbatim excerpt of the cited value (<=500 chars).",
+        max_length=NARRATIVE_MAX,
+        description="Verbatim excerpt of the cited value.",
     )
 
 
@@ -51,13 +55,13 @@ class FindingClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     finding_id: str = Field(..., pattern=FINDING_ID_PATTERN, description='Stable id, "F-NNN".')
-    # Empirically bumped 200 -> 500 after run6: nuanced summaries need room
-    # (same iter2 parse crash as FindingCitation.excerpt).
-    summary: str = Field(..., min_length=1, max_length=500, description="One-line claim.")
-    # Empirically bumped 2000 -> 5000 after a run6 follow-up: the Investigator's
-    # iteration-rebinding narrative (explaining how this iteration's audit
-    # evidence supersedes prior iterations') exceeded 2000 chars.
-    detail: str = Field(..., min_length=1, max_length=5000, description="Reasoning narrative.")
+    # Narrative fields: safety ceiling only (see NARRATIVE_MAX note above).
+    summary: str = Field(
+        ..., min_length=1, max_length=NARRATIVE_MAX, description="One-line claim."
+    )
+    detail: str = Field(
+        ..., min_length=1, max_length=NARRATIVE_MAX, description="Reasoning narrative."
+    )
     confidence: Literal["high", "medium", "low"] = Field(
         ..., description="Investigator's confidence in this claim."
     )
@@ -86,7 +90,8 @@ class FindingsReport(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    case_question: str = Field(..., min_length=1, max_length=500)
+    # Narrative: an analyst case question is free prose, not an identifier.
+    case_question: str = Field(..., min_length=1, max_length=NARRATIVE_MAX)
     iteration: int = Field(..., ge=1)
     timestamp_utc: str = Field(..., min_length=1, description="ISO-8601 UTC timestamp.")
     findings: list[Finding] = Field(default_factory=list)

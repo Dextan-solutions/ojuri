@@ -395,3 +395,31 @@ adds 500-1500 chars beyond a normal forensic detail. 5000 provides
 sufficient room without unbounded growth.
 Related: ojuri/agents/finding.py (FindingClaim.detail); tests/unit/test_finding_schema.py
 (2 new boundary tests).
+
+## 2026-05-19 — Systematic char-limit audit: narrative-field safety ceiling
+Context: Four successive runs each surfaced a different narrative-field
+max_length crash (VerdictReason.detail 500, FindingCitation.excerpt 200,
+FindingClaim.summary 200, FindingClaim.detail 2000). Each fix-and-bump
+commit felt sufficient; the next run found another field. The pattern:
+tight caps on narrative LLM output are a brittleness, not a defense.
+Decision: Apply a principled distinction across all agents schemas:
+- NARRATIVE fields (summary, detail, excerpt, message, etc.): single
+  safety ceiling of 20000 chars. Large enough that no real forensic
+  output triggers it; small enough to catch a runaway LLM producing
+  100KB of garbage. The ceiling is for protection, not correctness.
+- IDENTIFIER fields (finding_id, tool_name, primitive_name, path
+  patterns, hashes): keep existing constraints. They're structured;
+  length matters.
+Alternatives considered:
+- Remove max_length entirely on narrative fields. Rejected — no upper
+  bound risks context-window blow-up if an LLM produces extreme output.
+- Higher ceiling (50000 or 100000). Rejected — 20000 is a comfortable
+  margin and matches typical LLM output budgets per turn.
+- Keep bumping field-by-field. Rejected — that pattern produced 4
+  consecutive empirical bumps and would have produced more.
+Rationale: The original 200/500/2000 limits encoded an assumption that
+never matched LLM reality. The systematic fix encodes the right
+abstraction: narrative caps exist as safety ceilings, not content
+limits.
+Related: ojuri/agents/finding.py; ojuri/agents/auditor_verdict.py;
+tests/unit/test_finding_schema.py; tests/unit/test_auditor_verdict_schema.py.

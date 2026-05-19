@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ojuri.agents.finding import FINDING_ID_PATTERN
+from ojuri.agents.finding import FINDING_ID_PATTERN, NARRATIVE_MAX
 
 # "sha256:" (7) + 64 hex chars = 71 chars total.
 AUDIT_LOG_HASH_PATTERN = r"^sha256:[0-9a-f]{64}$"
@@ -36,10 +36,10 @@ class VerdictReason(BaseModel):
         "incoherent_reasoning",
         "missing_tool_call",
     ]
-    # 500 was empirically insufficient (run4 crashed when an explanation for
-    # an unverifiable payload-level citation exceeded it). 3000 leaves room
-    # for thorough path/value reasoning without unbounded growth.
-    detail: str = Field(..., min_length=1, max_length=3000)
+    # Narrative: safety ceiling only. See NARRATIVE_MAX note in finding.py;
+    # empirical runs (DECISIONS 2026-05-19) showed tight caps on narrative
+    # LLM output are a brittleness, not a defense.
+    detail: str = Field(..., min_length=1, max_length=NARRATIVE_MAX)
     audit_entries_examined: list[int] = Field(default_factory=list)
 
 

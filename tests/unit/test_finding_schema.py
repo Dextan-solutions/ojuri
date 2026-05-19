@@ -94,48 +94,80 @@ def test_confidence_values_constrained() -> None:
         )
 
 
-def test_excerpt_500_chars_accepted() -> None:
+# Narrative fields share a single 20000-char safety ceiling (NARRATIVE_MAX).
+# One boundary test per field: at the ceiling accepted, one over rejected.
+# See DECISIONS 2026-05-19.
+
+CEILING = 20000
+
+
+def test_excerpt_at_ceiling_accepted() -> None:
     FindingCitation(
         audit_sequence=1,
         tool_name="get_registry_autostarts",
         relevant_output_path="entries[0].raw",
-        excerpt="x" * 500,
+        excerpt="x" * CEILING,
     )
 
 
-def test_excerpt_501_chars_rejected() -> None:
+def test_excerpt_above_ceiling_rejected() -> None:
     with pytest.raises(ValidationError):
         FindingCitation(
             audit_sequence=1,
             tool_name="get_registry_autostarts",
             relevant_output_path="entries[0].raw",
-            excerpt="x" * 501,
+            excerpt="x" * (CEILING + 1),
         )
 
 
-def test_summary_500_chars_accepted() -> None:
+def test_summary_at_ceiling_accepted() -> None:
     FindingClaim(
-        finding_id="F-001", summary="s" * 500, detail="d", confidence="high"
+        finding_id="F-001", summary="s" * CEILING, detail="d", confidence="high"
     )
 
 
-def test_summary_501_chars_rejected() -> None:
+def test_summary_above_ceiling_rejected() -> None:
     with pytest.raises(ValidationError):
         FindingClaim(
-            finding_id="F-001", summary="s" * 501, detail="d", confidence="high"
+            finding_id="F-001",
+            summary="s" * (CEILING + 1),
+            detail="d",
+            confidence="high",
         )
 
 
-def test_detail_5000_chars_accepted() -> None:
+def test_detail_at_ceiling_accepted() -> None:
     FindingClaim(
-        finding_id="F-001", summary="s", detail="d" * 5000, confidence="high"
+        finding_id="F-001", summary="s", detail="d" * CEILING, confidence="high"
     )
 
 
-def test_detail_5001_chars_rejected() -> None:
+def test_detail_above_ceiling_rejected() -> None:
     with pytest.raises(ValidationError):
         FindingClaim(
-            finding_id="F-001", summary="s", detail="d" * 5001, confidence="high"
+            finding_id="F-001",
+            summary="s",
+            detail="d" * (CEILING + 1),
+            confidence="high",
+        )
+
+
+def test_case_question_at_ceiling_accepted() -> None:
+    FindingsReport(
+        iteration=1,
+        findings=[_finding()],
+        timestamp_utc="2026-05-17T00:00:00+00:00",
+        case_question="q" * CEILING,
+    )
+
+
+def test_case_question_above_ceiling_rejected() -> None:
+    with pytest.raises(ValidationError):
+        FindingsReport(
+            iteration=1,
+            findings=[_finding()],
+            timestamp_utc="2026-05-17T00:00:00+00:00",
+            case_question="q" * (CEILING + 1),
         )
 
 
@@ -169,12 +201,14 @@ if __name__ == "__main__":
     test_finding_with_empty_citations_rejected()
     test_finding_id_pattern_enforced()
     test_confidence_values_constrained()
-    test_excerpt_500_chars_accepted()
-    test_excerpt_501_chars_rejected()
-    test_summary_500_chars_accepted()
-    test_summary_501_chars_rejected()
-    test_detail_5000_chars_accepted()
-    test_detail_5001_chars_rejected()
+    test_excerpt_at_ceiling_accepted()
+    test_excerpt_above_ceiling_rejected()
+    test_summary_at_ceiling_accepted()
+    test_summary_above_ceiling_rejected()
+    test_detail_at_ceiling_accepted()
+    test_detail_above_ceiling_rejected()
+    test_case_question_at_ceiling_accepted()
+    test_case_question_above_ceiling_rejected()
     test_findings_report_round_trip()
     test_findings_report_canonical_json()
     print("All finding-schema unit tests passed.")
