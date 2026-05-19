@@ -35,10 +35,13 @@ class FindingCitation(BaseModel):
         min_length=1,
         description='Path into the tool output, e.g. "entries[3].file_name".',
     )
+    # Empirically bumped 200 -> 500 after run6: real registry-output JSON
+    # (e.g. a full SecurityHealth Run entry) exceeded 200 chars and crashed
+    # the orchestrator while parsing iter2 findings.
     excerpt: str = Field(
         ...,
-        max_length=200,
-        description="Verbatim excerpt of the cited value (<=200 chars).",
+        max_length=500,
+        description="Verbatim excerpt of the cited value (<=500 chars).",
     )
 
 
@@ -48,7 +51,9 @@ class FindingClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     finding_id: str = Field(..., pattern=FINDING_ID_PATTERN, description='Stable id, "F-NNN".')
-    summary: str = Field(..., min_length=1, max_length=200, description="One-line claim.")
+    # Empirically bumped 200 -> 500 after run6: nuanced summaries need room
+    # (same iter2 parse crash as FindingCitation.excerpt).
+    summary: str = Field(..., min_length=1, max_length=500, description="One-line claim.")
     detail: str = Field(..., min_length=1, max_length=2000, description="Reasoning narrative.")
     confidence: Literal["high", "medium", "low"] = Field(
         ..., description="Investigator's confidence in this claim."

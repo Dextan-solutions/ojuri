@@ -94,6 +94,38 @@ def test_confidence_values_constrained() -> None:
         )
 
 
+def test_excerpt_500_chars_accepted() -> None:
+    FindingCitation(
+        audit_sequence=1,
+        tool_name="get_registry_autostarts",
+        relevant_output_path="entries[0].raw",
+        excerpt="x" * 500,
+    )
+
+
+def test_excerpt_501_chars_rejected() -> None:
+    with pytest.raises(ValidationError):
+        FindingCitation(
+            audit_sequence=1,
+            tool_name="get_registry_autostarts",
+            relevant_output_path="entries[0].raw",
+            excerpt="x" * 501,
+        )
+
+
+def test_summary_500_chars_accepted() -> None:
+    FindingClaim(
+        finding_id="F-001", summary="s" * 500, detail="d", confidence="high"
+    )
+
+
+def test_summary_501_chars_rejected() -> None:
+    with pytest.raises(ValidationError):
+        FindingClaim(
+            finding_id="F-001", summary="s" * 501, detail="d", confidence="high"
+        )
+
+
 def test_findings_report_round_trip() -> None:
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "findings_iter1.json"
@@ -124,6 +156,10 @@ if __name__ == "__main__":
     test_finding_with_empty_citations_rejected()
     test_finding_id_pattern_enforced()
     test_confidence_values_constrained()
+    test_excerpt_500_chars_accepted()
+    test_excerpt_501_chars_rejected()
+    test_summary_500_chars_accepted()
+    test_summary_501_chars_rejected()
     test_findings_report_round_trip()
     test_findings_report_canonical_json()
     print("All finding-schema unit tests passed.")

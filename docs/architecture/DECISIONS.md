@@ -354,3 +354,30 @@ outputs to verify citations); `ojuri/agents/loop.py` (Auditor `--add-dir`
 for `outputs/`); `scripts/verify_chain.py` (output cross-check, exit 4);
 also bumped `VerdictReason.detail` from 500 → 3000 chars
 (`ojuri/agents/auditor_verdict.py`); ARCHITECTURE.md §6.5, §8.
+
+## 2026-05-19 — Three follow-on fixes from run6
+
+Context: Run6 (architectural Option B in place, all 3 prior bug fixes
+committed) produced 1/2 VERIFIED in iteration 1 — F-001 (HKLM autostarts)
+verified cleanly via the new outputs/ files. F-002 (claimed HKCU was
+denied) was correctly DISPUTED by the Auditor: the Investigator
+hallucinated permission-denial language without a citable audit record.
+The orchestrator then crashed reading iter2 findings due to two
+empirically-too-small Pydantic max_length caps.
+
+Root cause of the hallucination: get_user_autostarts was missing from
+ojuri/agents/loop.py's --allowedTools list. When the primitive was added
+in commit 521024f, the wire-in to the Investigator's allowed-tools list
+was missed. Claude Code's permission layer denied the call; the
+Investigator's response interpreted the denial but produced no valid
+citation.
+
+Decision: Three fixes in one commit:
+- Add mcp__ojuri__get_user_autostarts to --allowedTools in loop.py
+- Bump FindingCitation.excerpt max_length 200 → 500 (real registry-
+  output JSON exceeds 200)
+- Bump FindingClaim.summary max_length 200 → 500 (nuanced summaries
+  need room)
+
+Related: ojuri/agents/loop.py (allowedTools); ojuri/agents/finding.py
+(schema bumps); tests/unit/test_finding.py.

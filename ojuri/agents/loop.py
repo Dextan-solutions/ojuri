@@ -381,6 +381,7 @@ async def run_investigator(prompt: str, output_dir: Path, iteration: int) -> Pat
         "--allowedTools",
         "mcp__ojuri__list_evidence_artefacts",
         "mcp__ojuri__get_registry_autostarts",
+        "mcp__ojuri__get_user_autostarts",
         "mcp__ojuri__get_prefetch_entries",
         "mcp__ojuri__get_mft_timeline",
         "Write",
