@@ -488,10 +488,43 @@ failure so the logger never reports a record that did not durably land
   (chain link); (3) `this_record_hash` equals the recomputed hash of the record
   minus that field (self-hash).
 - **Exit codes:** `0` chain valid · `1` chain invalid (≥1 failure) · `2` file
-  or argument error. Empty log ⇒ valid (nothing to verify). The agent
-  orchestrator runs this in pre-flight; a broken chain aborts the loop
-  (agents.md §4) — Ojuri refuses to reason over an audit log it cannot prove
-  intact.
+  or argument error · `4` output tamper detected (chain valid but an
+  `outputs/seq-N.json` no longer hashes to its record's `output_hash`, see
+  §6.5). Empty log ⇒ valid (nothing to verify). The agent orchestrator runs
+  this in pre-flight; a broken chain aborts the loop (agents.md §4) — Ojuri
+  refuses to reason over an audit log it cannot prove intact.
+
+### 6.5 Output files (verification aid)
+
+The audit chain is deliberately **hash-only** (§6.1): it proves *what was asked
+and answered* without storing payloads. But the Auditor's job is to verify
+Investigator citations like `entries[0].name == 'GrpConv'` — a hash alone can
+neither confirm nor refute a value *inside* a payload. First real agent runs
+(run3, run4) made this concrete: every payload-level citation was unverifiable,
+so the Auditor disputed everything (DECISIONS 2026-05-19 "Option B").
+
+**Two-layer model.** The chain stays hash-only; *additionally*, every tool call
+writes its full output payload to `<log_parent>/outputs/seq-{N:03d}.json`:
+
+- **Layer 1 — cryptographic chain** (`audit.log`): small, linear, append-only,
+  fsync-durable, court-defensible. Unchanged by Option B.
+- **Layer 2 — per-call output files** (`outputs/seq-NNN.json`): the *exact
+  canonical bytes that were hashed* into that record's `output_hash` (sorted
+  keys, compact separators, **no indent** — so a verifier can re-hash the
+  literal file and reproduce the logged hash; analysts pretty-print a copy
+  later if they want). Written atomically (`seq-N.json.tmp` → fsync →
+  `os.rename`). A failure to write a Layer-2 file logs a warning and continues:
+  it is a *verification aid*, never the integrity guarantee, so it must not
+  crash or roll back a Layer-1 record that already landed.
+
+**Tamper-evidence both ways.** `verify_chain.py`, after the chain checks pass,
+re-hashes each `outputs/seq-N.json` and compares to the record's `output_hash`:
+match ⇒ `seq N output verified`; mismatch ⇒ `seq N output TAMPERED` and exit
+code `4`; file absent ⇒ `seq N output not stored` and continue. Modify either
+layer and verification fails — the chain catches log tampering, the re-hash
+catches payload tampering. **Legacy compatibility:** a run with no `outputs/`
+directory is still fully verifiable for chain integrity; the cross-check
+reports "no output files to cross-check" and is a no-op, not a failure.
 
 ---
 
@@ -585,9 +618,9 @@ duplicated here.** Summary of the selected design:
   available) and an **Auditor** launched as an isolated subprocess.
 - **Pattern B (Auditor reads the audit log only):** the Auditor is started in
   an empty working directory with `--strict-mcp-config` and no `--mcp-config`,
-  so it has **zero** MCP tools by construction. It reads `audit.log` and the
-  findings file, and writes verdicts. Its no-tool constraint is *architectural,
-  not prompt-instructed*.
+  so it has **zero** MCP tools by construction. It reads `audit.log`, the
+  findings file, and the per-call payload files, and writes verdicts. Its
+  no-tool constraint is *architectural, not prompt-instructed*.
 - **Format 2 (structured Findings):** each `Finding` carries a `FindingClaim`
   plus ≥1 `FindingCitation` (audit sequence, tool, output path, ≤200-char
   excerpt), making "claim → cited record → excerpt" mechanically checkable.
@@ -612,6 +645,17 @@ duplicated here.** Summary of the selected design:
   revised, supported with more evidence, **or** downgraded to `low` confidence
   with explanation — never silently deleted. A downgraded finding is *still
   audited*.
+
+**Citation verification against payloads (Option B, §6.5).** A `FindingCitation`
+names an `audit_sequence`, `tool_name`, output path, and ≤200-char excerpt. The
+hash-only chain alone cannot confirm the excerpt is genuinely *in* that payload,
+so the Auditor reads `analysis/outputs/seq-{N:03d}.json` — the full payload of
+the cited call — navigates to the cited path, and compares the value to the
+excerpt. The orchestrator grants the Auditor `--add-dir` access to the
+`outputs/` directory. A missing or empty output file for a cited sequence makes
+the citation unverifiable: the verdict is `DISPUTED` (`citation_mismatch`). This
+closes the gap that made run3/run4 dispute every payload-level claim while
+keeping the chain itself hash-only.
 
 The orchestrator (`ojuri/agents/loop.py`) is deterministic Python: it owns
 iteration, timeouts (Investigator 1800 s, Auditor 600 s), pre-flight chain

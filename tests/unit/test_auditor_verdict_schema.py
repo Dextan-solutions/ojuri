@@ -107,10 +107,31 @@ def test_audit_log_hash_format_enforced() -> None:
             AuditReport(**base, audit_log_hash=bad)
 
 
+def test_verdict_reason_detail_3000_chars_accepted() -> None:
+    """500 was empirically insufficient (run4); 3000 is the new ceiling."""
+    r = VerdictReason(
+        code="citation_mismatch",
+        detail="x" * 3000,
+        audit_entries_examined=[1],
+    )
+    assert len(r.detail) == 3000
+
+
+def test_verdict_reason_detail_3001_chars_rejected() -> None:
+    with pytest.raises(ValidationError):
+        VerdictReason(
+            code="citation_mismatch",
+            detail="x" * 3001,
+            audit_entries_examined=[1],
+        )
+
+
 if __name__ == "__main__":
     test_disputed_verdict_requires_reasons()
     test_verified_verdict_with_no_reasons_accepted()
     test_audit_report_with_mixed_verdicts()
     test_verdict_reason_code_constrained()
     test_audit_log_hash_format_enforced()
+    test_verdict_reason_detail_3000_chars_accepted()
+    test_verdict_reason_detail_3001_chars_rejected()
     print("All auditor-verdict-schema unit tests passed.")

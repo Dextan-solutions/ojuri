@@ -312,3 +312,45 @@ Out of scope for v0: Winlogon (Shell, Userinit), Shell Folders Startup,
 and other user-scope persistence vectors — roadmap.
 Related: ARCHITECTURE.md §5.2 (new spec); ojuri/mcp_server/primitives/user_autostarts.py;
 ojuri/agents/investigator/system_prompt.md (HKCU guidance added).
+
+---
+
+## 2026-05-19 — Audit architecture: hash-only log + per-call output files (Option B)
+
+**Context:** The first real agent runs (run3, run4) revealed the audit log's
+integrity model conflicts with the Auditor's verification mandate. The log
+stores only `input_hash` and `output_hash`; the Auditor needs to verify
+Investigator citations like `entries[0].name == 'GrpConv'` against actual
+payload content. Run3 disputed all findings on this basis (payload-level
+citations are unprovable against a hash-only log). Run4 crashed when an
+Auditor explanation exceeded the 500-char `VerdictReason.detail` limit —
+itself a symptom of the Auditor writing long explanations for citations it
+structurally could not verify.
+**Decision:** Option B — the audit log stays **hash-only** (cryptographic
+chain, court-defensible, append-only, small) but each MCP tool call ALSO
+writes its full output payload to `<log_parent>/outputs/seq-{N:03d}.json`.
+The file holds the exact canonical bytes that were hashed into `output_hash`
+(sorted keys, compact separators, no indent), so re-hashing the literal file
+reproduces the logged hash. The Auditor reads these files to verify
+payload-level citations; `verify_chain.py` optionally re-hashes them and
+confirms each matches the record's `output_hash` (new exit code `4` = output
+tamper). Output-file write failure logs a warning and continues — the chain
+is the integrity guarantee, the output file is a verification aid. Legacy
+runs without an `outputs/` dir remain fully chain-verifiable.
+**Alternatives:**
+- *Option A — store payloads inside the audit log itself.* Rejected: the log
+  balloons to potentially GBs (MFT outputs are 100 MB+), with performance
+  cost and a far harder-to-inspect chain.
+- *Option C — restrict Investigator claims to what hashes alone can prove.*
+  Rejected: defeats the point of producing useful findings; the analyst
+  would have to re-run every tool by hand to see what was found.
+**Rationale:** Separation of concerns. The cryptographic chain stays small,
+linear, and append-only (court-defensible properties); the payload storage
+is a verification aid that is itself tamper-evident via `output_hash`. Two
+layers, each doing one job, both independently auditable.
+**Related:** `ojuri/mcp_server/audit/__init__.py` (`record()` writes
+`outputs/` files); `ojuri/agents/auditor/system_prompt.md` (Auditor reads
+outputs to verify citations); `ojuri/agents/loop.py` (Auditor `--add-dir`
+for `outputs/`); `scripts/verify_chain.py` (output cross-check, exit 4);
+also bumped `VerdictReason.detail` from 500 → 3000 chars
+(`ojuri/agents/auditor_verdict.py`); ARCHITECTURE.md §6.5, §8.

@@ -14,6 +14,15 @@ Hashing:
 
 Failure semantics:
   Fail-closed. If write fails, raise AuditWriteError; callers must propagate.
+
+Output files (verification aid — Option B, DECISIONS 2026-05-19):
+  In addition to the hash-only log record, each call's full output payload is
+  written to <log_parent>/outputs/seq-{N:03d}.json. The file holds the EXACT
+  canonical bytes that were hashed into output_hash (sort_keys=True, compact
+  separators, no indent) so a verifier can re-hash the literal file and match
+  the log; analysts can pretty-print it afterwards. The output file is a
+  verification aid, NOT the integrity guarantee — failure to write it logs a
+  warning and continues; the cryptographic chain is unaffected.
 """
 
 from __future__ import annotations
@@ -56,6 +65,7 @@ class AuditLogger:
 
     def __init__(self, log_path: Path) -> None:
         self.log_path = log_path
+        self.outputs_dir = log_path.parent / "outputs"
         self._lock = Lock()
         self._sequence = 0
         self._last_hash = ZERO_HASH
@@ -64,6 +74,32 @@ class AuditLogger:
 
     def _ensure_log_dir(self) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _write_output_file(self, sequence: int, output_canonical: bytes) -> None:
+        """Write the full output payload to outputs/seq-{N:03d}.json.
+
+        Writes the EXACT canonical bytes that were hashed into output_hash
+        (no indent) so verify_chain.py can re-hash the literal file and match
+        the log. Atomic: write to seq-N.json.tmp, fsync, os.rename. This is a
+        verification aid, not the integrity guarantee — any failure here is
+        logged as a warning and swallowed so the hash chain (already durably
+        written) is never compromised by an output-file problem.
+        """
+        try:
+            self.outputs_dir.mkdir(parents=True, exist_ok=True)
+            final_path = self.outputs_dir / f"seq-{sequence:03d}.json"
+            tmp_path = self.outputs_dir / f"seq-{sequence:03d}.json.tmp"
+            with tmp_path.open("wb") as f:
+                f.write(output_canonical)
+                f.flush()
+                os.fsync(f.fileno())
+            os.rename(tmp_path, final_path)
+        except Exception as e:  # noqa: BLE001 - must never crash the audit record
+            logger.warning(
+                "Failed to write output payload file for seq %d (%s); "
+                "hash chain is intact, output cross-check unavailable for this record",
+                sequence, e,
+            )
 
     def _recover_chain_state(self) -> None:
         """If the log exists with prior records, restore sequence + last_hash
@@ -100,7 +136,11 @@ class AuditLogger:
         with self._lock:
             self._sequence += 1
             input_hash = hash_value(input_payload)
-            output_hash = hash_value(output_payload)
+            # Canonicalise the output ONCE: the same bytes feed output_hash and
+            # the outputs/seq-N.json file, so re-hashing the file reproduces the
+            # logged hash exactly.
+            output_canonical = _canonical(output_payload)
+            output_hash = _sha256(output_canonical)
             timestamp_utc = datetime.now(timezone.utc).isoformat()
 
             # Build record WITHOUT this_record_hash, hash it, then add the hash.
@@ -129,6 +169,11 @@ class AuditLogger:
                 raise AuditWriteError(f"Failed to write audit record: {e}") from e
 
             self._last_hash = self_hash
+
+            # Chain record is now durable. Write the verification-aid output
+            # file; a failure here must not undo or crash the recorded call.
+            self._write_output_file(self._sequence, output_canonical)
+
             logger.info(
                 "Audit record %d written: tool=%s hash=%s",
                 self._sequence, tool_name, self_hash[:24] + "...",

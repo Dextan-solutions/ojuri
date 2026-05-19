@@ -443,6 +443,13 @@ async def run_auditor(
         str(Path(audit_log_path).parent),
         "--add-dir",
         str(output_dir),
+        # Per-call output payloads (Option B, DECISIONS 2026-05-19): the Auditor
+        # reads outputs/seq-N.json to verify payload-level citations. --add-dir
+        # already covers subdirectories of the audit-log parent, but the outputs
+        # dir is granted explicitly so the access is unambiguous in the audit
+        # trail and unaffected if either parent path changes.
+        "--add-dir",
+        str(Path(audit_log_path).parent / "outputs"),
     ]
     stdout = await _run_claude(
         cmd,

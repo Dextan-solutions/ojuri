@@ -86,5 +86,52 @@ async def main() -> int:
     return 0
 
 
+def test_end_to_end_record_and_verify_outputs() -> None:
+    """Option B end-to-end: record 3 tool calls, then verify_chain.py passes
+    both the hash chain AND the per-call output cross-check (exit 0)."""
+    import subprocess
+
+    from ojuri.mcp_server.audit import AuditLogger
+
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "audit.log"
+        logger = AuditLogger(log_path)
+
+        logger.record(
+            "list_evidence_artefacts",
+            {"evidence_root": "/evidence/case_x"},
+            {"profiles": [], "system_hives": {"SOFTWARE": "/evidence/SOFTWARE"}},
+        )
+        logger.record(
+            "get_registry_autostarts",
+            {"software_hive_path": "/evidence/SOFTWARE"},
+            {"entries": [{"name": "GrpConv", "path": "grpconv.exe -i"}]},
+        )
+        logger.record(
+            "get_prefetch_entries",
+            {"prefetch_path": "/evidence/Prefetch"},
+            {"entries": [{"executable": "CMD.EXE", "run_count": 4}]},
+        )
+
+        outputs_dir = log_path.parent / "outputs"
+        assert sorted(p.name for p in outputs_dir.iterdir()) == [
+            "seq-001.json",
+            "seq-002.json",
+            "seq-003.json",
+        ]
+
+        verify_script = REPO_ROOT / "scripts" / "verify_chain.py"
+        r = subprocess.run(
+            [sys.executable, str(verify_script), str(log_path)],
+            capture_output=True,
+            text=True,
+        )
+        combined = r.stdout + r.stderr
+        assert r.returncode == 0, f"expected 0, got {r.returncode}\n{combined}"
+        assert "CHAIN VALID" in combined
+        assert "Records verified: 3" in combined
+        assert "3 verified, 0 not stored, 0 tampered" in combined
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

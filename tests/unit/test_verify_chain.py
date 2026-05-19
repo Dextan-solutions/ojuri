@@ -59,6 +59,21 @@ def make_valid_log(log_path: Path, n_records: int = 3) -> None:
             f.write(line)
 
 
+def make_matching_outputs(log_path: Path, n_records: int = 3) -> Path:
+    """Write outputs/seq-{i:03d}.json holding the exact canonical bytes that
+    make_valid_log hashed into each record's output_hash ({"y": i})."""
+    import hashlib  # noqa: F401  (parallels make_valid_log's local import)
+
+    def canonical(obj):
+        return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    outputs_dir = log_path.parent / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(1, n_records + 1):
+        (outputs_dir / f"seq-{i:03d}.json").write_bytes(canonical({"y": i}))
+    return outputs_dir
+
+
 def test_valid_log_returns_exit_zero() -> None:
     with tempfile.TemporaryDirectory() as td:
         log = Path(td) / "audit.log"
@@ -141,6 +156,50 @@ def test_empty_log_is_valid() -> None:
         assert "Records verified: 0" in output
 
 
+# --------------------------------------------------------------------------- #
+# Option B: outputs/ cross-check (DECISIONS 2026-05-19)
+# --------------------------------------------------------------------------- #
+def test_verify_with_missing_outputs_passes() -> None:
+    """Legacy run: chain intact, no outputs/ dir → exit 0 with an explicit note."""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "audit.log"
+        make_valid_log(log, n_records=3)
+        code, output = run_verifier(log)
+        assert code == 0, f"expected 0, got {code}\noutput:\n{output}"
+        assert "CHAIN VALID" in output
+        assert "no output files to cross-check" in output
+
+
+def test_verify_with_matching_outputs_passes() -> None:
+    """Chain intact and every output file matches its output_hash → exit 0."""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "audit.log"
+        make_valid_log(log, n_records=3)
+        make_matching_outputs(log, n_records=3)
+        code, output = run_verifier(log, verbose=True)
+        assert code == 0, f"expected 0, got {code}\noutput:\n{output}"
+        assert "CHAIN VALID" in output
+        assert "seq 1 output verified" in output
+        assert "3 verified, 0 not stored, 0 tampered" in output
+
+
+def test_verify_with_tampered_output_fails_exit_4() -> None:
+    """Modify one outputs/seq-N.json → verifier detects the mismatch, exit 4."""
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "audit.log"
+        make_valid_log(log, n_records=3)
+        outputs_dir = make_matching_outputs(log, n_records=3)
+
+        # Tamper with seq-002.json (even a pretty-print changes the bytes).
+        (outputs_dir / "seq-002.json").write_bytes(b'{"y": 999}')
+
+        code, output = run_verifier(log)
+        assert code == 4, f"expected 4, got {code}\noutput:\n{output}"
+        assert "CHAIN VALID" in output  # the chain itself is untouched
+        assert "OUTPUT TAMPER DETECTED" in output
+        assert "seq 2 output TAMPERED" in output
+
+
 if __name__ == "__main__":
     test_valid_log_returns_exit_zero()
     test_missing_file_returns_exit_two()
@@ -148,4 +207,7 @@ if __name__ == "__main__":
     test_broken_chain_link_detected()
     test_skipped_sequence_detected()
     test_empty_log_is_valid()
+    test_verify_with_missing_outputs_passes()
+    test_verify_with_matching_outputs_passes()
+    test_verify_with_tampered_output_fails_exit_4()
     print("All verify_chain tests passed.")

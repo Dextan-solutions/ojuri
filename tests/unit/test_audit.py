@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
+import ojuri.mcp_server.audit as audit_mod
 from ojuri.mcp_server.audit import (
     AuditLogger,
     AuditWriteError,
@@ -101,6 +105,80 @@ def test_log_file_format_is_jsonl() -> None:
             assert "sequence" in obj
 
 
+# --------------------------------------------------------------------------- #
+# Option B: per-call output files (DECISIONS 2026-05-19)
+# --------------------------------------------------------------------------- #
+def test_record_writes_output_file() -> None:
+    """After record(), outputs/seq-001.json holds the canonical payload bytes."""
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "audit.log"
+        logger = AuditLogger(log_path)
+        output = {"greeting": "hi", "n": 3, "items": ["b", "a"]}
+        logger.record("hello_world", {"name": "judge"}, output)
+
+        out_file = logger.outputs_dir / "seq-001.json"
+        assert out_file.exists()
+        # Literal bytes must equal the canonical form that was hashed —
+        # no indent, sorted keys, compact separators.
+        assert out_file.read_bytes() == _canonical(output)
+
+
+def test_output_file_hash_matches_audit_record() -> None:
+    """Re-hashing the output file reproduces the record's output_hash."""
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "audit.log"
+        logger = AuditLogger(log_path)
+        rec = logger.record("tool_x", {"i": 1}, {"o": [1, 2, 3], "k": "v"})
+
+        out_file = logger.outputs_dir / "seq-001.json"
+        recomputed = "sha256:" + hashlib.sha256(out_file.read_bytes()).hexdigest()
+        assert recomputed == rec["output_hash"]
+
+
+def test_atomic_write_no_partial_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the output-file fsync fails mid-write, the audit record still lands
+    and NO final seq-N.json appears (only the .tmp may exist)."""
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "audit.log"
+        logger = AuditLogger(log_path)
+
+        real_fsync = os.fsync
+        calls = {"n": 0}
+
+        def flaky_fsync(fd: int) -> None:
+            calls["n"] += 1
+            # Call 1 = audit.log append (must stay durable). Call 2 =
+            # outputs/seq-001.json.tmp — simulate failure mid-write.
+            if calls["n"] >= 2:
+                raise OSError("simulated fsync failure on output file")
+            return real_fsync(fd)
+
+        monkeypatch.setattr(audit_mod.os, "fsync", flaky_fsync)
+
+        rec = logger.record("tool_x", {"i": 1}, {"o": 1})
+
+        # The chain record itself succeeded — the output file is only an aid.
+        assert rec["sequence"] == 1
+        assert rec["this_record_hash"].startswith("sha256:")
+        # The final, renamed output file must NOT exist.
+        assert not (logger.outputs_dir / "seq-001.json").exists()
+        # The audit log line is still durably present (chain intact).
+        with log_path.open("rb") as f:
+            lines = [ln for ln in f if ln.strip()]
+        assert len(lines) == 1
+
+
+def test_output_dir_created_if_missing() -> None:
+    """outputs/ does not exist until the first record(), then is created."""
+    with tempfile.TemporaryDirectory() as td:
+        log_path = Path(td) / "audit.log"
+        logger = AuditLogger(log_path)
+        assert not logger.outputs_dir.exists()
+        logger.record("hello_world", {"a": 1}, {"b": 2})
+        assert logger.outputs_dir.is_dir()
+        assert (logger.outputs_dir / "seq-001.json").exists()
+
+
 if __name__ == "__main__":
     test_canonical_is_stable_across_key_order()
     test_hash_value_matches_manual_sha256()
@@ -109,4 +187,7 @@ if __name__ == "__main__":
     test_this_record_hash_is_correct()
     test_chain_recovery_across_logger_restart()
     test_log_file_format_is_jsonl()
+    test_record_writes_output_file()
+    test_output_file_hash_matches_audit_record()
+    test_output_dir_created_if_missing()
     print("All audit unit tests passed.")

@@ -36,7 +36,10 @@ class VerdictReason(BaseModel):
         "incoherent_reasoning",
         "missing_tool_call",
     ]
-    detail: str = Field(..., min_length=1, max_length=500)
+    # 500 was empirically insufficient (run4 crashed when an explanation for
+    # an unverifiable payload-level citation exceeded it). 3000 leaves room
+    # for thorough path/value reasoning without unbounded growth.
+    detail: str = Field(..., min_length=1, max_length=3000)
     audit_entries_examined: list[int] = Field(default_factory=list)
 
 
